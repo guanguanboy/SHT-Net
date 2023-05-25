@@ -761,7 +761,7 @@ class LapSwinIR(nn.Module):
             # for image denoising and JPEG compression artifact reduction
             self.conv_last = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
 
-        self.lap_pyramid = Lap_Pyramid_Conv(num_high=2)
+        self.lap_pyramid = Lap_Pyramid_Conv(num_high=2, device=torch.device('cuda'))
 
         #for param in self.lap_pyramid.parameters():
             #param.requires_grad = False

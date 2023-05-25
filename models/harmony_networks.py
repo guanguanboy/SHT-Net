@@ -24,7 +24,7 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = DHTGenerator(opt)
     elif netG == 'SWINHIH':
         net = SWINHIHGenerator(opt)
-    elif netG == 'LAP_SWIN':
+    elif netG == 'LAPSWINHIH':
         net = LAPSWINHIHGenerator(opt)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)

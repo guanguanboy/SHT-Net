@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-
+from lap_pyr_model import Lap_Pyramid_Conv,Trans_high,Trans_high_masked_residual
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -615,7 +615,7 @@ class UpsampleOneStep(nn.Sequential):
         return flops
 
 
-class SwinIR(nn.Module):
+class LapSwinIR(nn.Module):
     r""" SwinIR
         A PyTorch impl of : `SwinIR: Image Restoration Using Swin Transformer`, based on Swin Transformer.
 
@@ -650,7 +650,7 @@ class SwinIR(nn.Module):
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='', resi_connection='1conv',
                  **kwargs):
-        super(SwinIR, self).__init__()
+        super(LapSwinIR, self).__init__()
         num_in_ch = in_chans
         num_out_ch = 3
         num_feat = 64
@@ -761,6 +761,13 @@ class SwinIR(nn.Module):
             # for image denoising and JPEG compression artifact reduction
             self.conv_last = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
 
+        self.lap_pyramid = Lap_Pyramid_Conv(num_high=2)
+
+        #for param in self.lap_pyramid.parameters():
+            #param.requires_grad = False
+
+        self.trans_high = Trans_high_masked_residual(num_residual_blocks=3, num_high=2)
+
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -786,7 +793,19 @@ class SwinIR(nn.Module):
         mod_pad_w = (self.window_size - w % self.window_size) % self.window_size
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
+    
+    def get_recon_res(self, pyr, mask, model_output):
+        fake_B_low = model_output
+        real_A_up = F.interpolate(pyr[-1], size=(pyr[-2].shape[2], pyr[-2].shape[3]))
+        fake_B_up = F.interpolate(fake_B_low, size=(pyr[-2].shape[2], pyr[-2].shape[3]))
+        mask = F.interpolate(mask, size=(pyr[-2].shape[2], pyr[-2].shape[3]))
+        high_with_low = torch.cat([pyr[-2], real_A_up, fake_B_up], 1)
+        pyr_A_trans = self.trans_high(high_with_low, mask, pyr, fake_B_low)
 
+        enlarged_output = self.lap_pyramid.pyramid_recons(pyr_A_trans)
+
+        return enlarged_output
+    
     def forward_features(self, x):
         x_size = (x.shape[2], x.shape[3])
         x = self.patch_embed(x)
@@ -803,7 +822,17 @@ class SwinIR(nn.Module):
         return x
 
     def forward(self, x):
+
         H, W = x.shape[2:]
+
+        #laplace分解
+        pyr = self.lap_pyramid.pyramid_decom(x[:,:3,:,:])
+        x_low = pyr[-1]
+        #对mask也做一个下采样
+        mask = x[:,3,:,:].unsqueeze(1)
+        mask_down = torch.nn.functional.interpolate(mask, size=x_low.shape[-2:])
+        x = torch.cat((x_low, mask_down), dim=1)
+        
         x = self.check_image_size(x)
         
         self.mean = self.mean.type_as(x)
@@ -838,6 +867,9 @@ class SwinIR(nn.Module):
 
         x = x / self.img_range + self.mean
 
+        #拉普拉斯重建
+        x = self.get_recon_res(pyr, mask_down, x)
+
         return x[:, :, :H*self.upscale, :W*self.upscale]
 
     def flops(self):
@@ -855,14 +887,14 @@ class SwinIR(nn.Module):
 if __name__ == '__main__':
     upscale = 1
     window_size = 8
-    height = 256 
-    width = 256
-    model = SwinIR(upscale=1, in_chans=4, img_size=(256, 256),
+    height = 1024 
+    width = 1024
+    model = LapSwinIR(upscale=1, in_chans=4, img_size=(256, 256),
                    window_size=window_size, img_range=1., depths=[6, 6, 6, 6],
                    embed_dim=60, num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='')
     print(model)
     #print(height, width, model.flops() / 1e9)
 
-    x = torch.randn((1, 4, width, height))
+    x = torch.randn((1, 4, 1024, 1024))
     x = model(x)
     print(x.shape)

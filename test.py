@@ -8,7 +8,7 @@ from options.test_options import TestOptions
     
 def main():
     cfg = TestOptions().parse()   # get training options
-    cfg.NUM_GPUS = torch.cuda.device_count()
+    cfg.NUM_GPUS =  cfg.local_rank
     cfg.serial_batches = True  # disable data shuffling; comment this line if results on randomly chosen images are needed.
     cfg.no_flip = True    # no flip; comment this line if results on flipped images are needed.
     cfg.display_id = -1   # no visdom display; the test code saves the results to a HTML file.

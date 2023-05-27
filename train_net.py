@@ -96,10 +96,10 @@ def train(cfg):
 
 def test(cfg):
     dataset = create_dataset(cfg)  # create a dataset given cfg.dataset_mode and other options
-    postion_embedding = util.PositionEmbeddingSine(cfg)
-    patch_pos = util.PatchPositionEmbeddingSine(cfg)
+    #postion_embedding = util.PositionEmbeddingSine(cfg)
+    #patch_pos = util.PatchPositionEmbeddingSine(cfg)
     model = create_model(cfg)      # create a model given cfg.model and other options
-    model.set_position(postion_embedding,patch_pos=patch_pos)
+    #model.set_position(postion_embedding,patch_pos=patch_pos)
     model.setup(cfg)               # regular setup: load and print networks; create schedulers
 
     # create a website

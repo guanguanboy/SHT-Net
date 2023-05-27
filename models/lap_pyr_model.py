@@ -223,8 +223,8 @@ class Trans_high(nn.Module):
 
         for i in range(self.num_high):
             mask = nn.functional.interpolate(mask, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3]))
-            self.trans_mask_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
-            mask = self.trans_mask_block(mask)
+            trans_mask_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
+            mask = trans_mask_block(mask)
             result_highfreq = torch.mul(pyr_original[-2-i], mask)
             setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq)
 
@@ -280,7 +280,12 @@ class Trans_high_masked_residual(nn.Module):
                 nn.LeakyReLU(),
                 nn.Conv2d(16, 1, 1))
             setattr(self, 'trans_mask_block_{}'.format(str(i)), trans_mask_block)
-
+        """
+        self.trans_mask_block = nn.Sequential(
+                nn.Conv2d(1, 16, 1),
+                nn.LeakyReLU(),
+                nn.Conv2d(16, 1, 1))
+        """
     def forward(self, x, mask, pyr_original, fake_low): #Trans_high中x是将高频与上采样的低频concate起来的结果，这里我们将其设置为与mask也concate起来的结果
 
         pyr_result = []
@@ -289,8 +294,8 @@ class Trans_high_masked_residual(nn.Module):
         for i in range(self.num_high):
             residual = nn.functional.interpolate(residual, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3]))
             mask = nn.functional.interpolate(mask, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3]))
-            self.trans_mask_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
-            residual = self.trans_mask_block(residual)
+            trans_mask_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
+            residual = trans_mask_block(residual)
             result_highfreq = torch.add(pyr_original[-2-i], residual)
             result_highfreq = result_highfreq * mask + (1 - mask) * pyr_original[-2-i] #将mask也考虑进来
             setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq)

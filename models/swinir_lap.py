@@ -766,7 +766,7 @@ class LapSwinIR(nn.Module):
         #for param in self.lap_pyramid.parameters():
             #param.requires_grad = False
 
-        self.trans_high = Trans_high_masked_residual(num_residual_blocks=3, num_high=2)
+        self.trans_high = Trans_high_masked_residual(num_residual_blocks=3, num_high=2).cuda()
 
         self.apply(self._init_weights)
 

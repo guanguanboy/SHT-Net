@@ -39,7 +39,7 @@ def main(dataset_name = None):
             for line in f.readlines():
                 name_str = line.rstrip()
                 if opt.evaluation_type == 'our':
-                    harmonized_path = os.path.join(opt.result_root,name_str)
+                    harmonized_path = os.path.join(opt.result_root,name_str[:-4] + '_harmonized.jpg')
                     comp_path = os.path.join(opt.dataroot, dataset_name, 'composite_images', line.rstrip())
 
                     #print(harmonized_path)
@@ -148,7 +148,7 @@ def main(dataset_name = None):
 
 def generstr(dataset_name='ALL'): 
     #datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night','IHD']
-    datasets = ['Hday2night']
+    datasets = ['HAdobe5k']
     if dataset_name == 'newALL':
         datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night','HVIDIT','newIHD']
     for i, item in enumerate(datasets):

@@ -105,10 +105,12 @@ def main(dataset_name = None):
         mask = tf.to_tensor(mask).unsqueeze(0).cuda()
         composite = tf.to_tensor(composite_np).unsqueeze(0).cuda()
 
-        #mse_score = mse(harmonized_np, real_np)
-        #psnr_score = psnr(real_np, harmonized_np, data_range=255)
-        mse_score = mse(composite_np, real_np)
-        psnr_score = psnr(real_np, composite_np, data_range=255)
+        mse_score = mse(harmonized_np, real_np)
+        psnr_score = psnr(real_np, harmonized_np, data_range=255)
+        
+        #使用原始composite数据evalution
+        #mse_score = mse(composite_np, real_np)
+        #psnr_score = psnr(real_np, composite_np, data_range=255)
 
         fore_area = torch.sum(mask)
         fmse_score = torch.nn.functional.mse_loss(harmonized*mask,real*mask)*256*256/fore_area

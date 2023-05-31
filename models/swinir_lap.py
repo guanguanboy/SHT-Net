@@ -766,7 +766,7 @@ class LapSwinIR(nn.Module):
         #for param in self.lap_pyramid.parameters():
             #param.requires_grad = False
 
-        self.trans_high = Trans_high_masked_residual(num_residual_blocks=3, num_high=2).cuda()
+        self.trans_high = Trans_high(num_residual_blocks=3, num_high=2).cuda()
 
         self.apply(self._init_weights)
 
@@ -801,6 +801,18 @@ class LapSwinIR(nn.Module):
         mask = F.interpolate(mask, size=(pyr[-2].shape[2], pyr[-2].shape[3]))
         high_with_low = torch.cat([pyr[-2], real_A_up, fake_B_up], 1)
         pyr_A_trans = self.trans_high(high_with_low, mask, pyr, fake_B_low)
+
+        enlarged_output = self.lap_pyramid.pyramid_recons(pyr_A_trans)
+
+        return enlarged_output
+    
+    def get_recon_res_no_mask(self, pyr, model_output):
+        fake_B_low = model_output
+        real_A_up = F.interpolate(pyr[-1], size=(pyr[-2].shape[2], pyr[-2].shape[3]))
+        fake_B_up = F.interpolate(fake_B_low, size=(pyr[-2].shape[2], pyr[-2].shape[3]))
+        #mask = F.interpolate(mask, size=(pyr[-2].shape[2], pyr[-2].shape[3]))
+        high_with_low = torch.cat([pyr[-2], real_A_up, fake_B_up], 1)
+        pyr_A_trans = self.trans_high(high_with_low, pyr, fake_B_low)
 
         enlarged_output = self.lap_pyramid.pyramid_recons(pyr_A_trans)
 
@@ -868,7 +880,7 @@ class LapSwinIR(nn.Module):
         x = x / self.img_range + self.mean
 
         #拉普拉斯重建
-        x = self.get_recon_res(pyr, mask_down, x)
+        x = self.get_recon_res_no_mask(pyr, x)
 
         return x[:, :, :H*self.upscale, :W*self.upscale]
 

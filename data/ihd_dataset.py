@@ -62,16 +62,16 @@ class IhdDataset(BaseDataset):
             self.trainfile = opt.dataset_root+opt.dataset_name+'_train.txt'
             with open(self.trainfile,'r') as f:
                     for line in f.readlines():
-                        self.image_paths.append(os.path.join(opt.dataset_root, line.rstrip()))
-                        #self.image_paths.append(os.path.join(opt.dataset_root,'composite_images',line.rstrip()))
+                        #self.image_paths.append(os.path.join(opt.dataset_root, line.rstrip()))
+                        self.image_paths.append(os.path.join(opt.dataset_root,'composite_images',line.rstrip()))
         elif opt.isTrain==False:
             #self.real_ext='.jpg'
             print('loading test file')
             self.trainfile = opt.dataset_root+opt.dataset_name+'_test.txt'
             with open(self.trainfile,'r') as f:
                     for line in f.readlines():
-                        self.image_paths.append(os.path.join(opt.dataset_root, line.rstrip()))
-                        #self.image_paths.append(os.path.join(opt.dataset_root,'composite_images',line.rstrip()))
+                        #self.image_paths.append(os.path.join(opt.dataset_root, line.rstrip()))
+                        self.image_paths.append(os.path.join(opt.dataset_root,'composite_images',line.rstrip()))
                         # print(line.rstrip())
         # get the image paths of your dataset;
           # You can call sorted(make_dataset(self.root, opt.max_dataset_size)) to get all the image paths under the directory self.root

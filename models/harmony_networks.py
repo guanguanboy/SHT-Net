@@ -10,7 +10,7 @@ from torchvision import models
 from util.tools import *
 from util import util
 from . import base_networks as networks_init
-from . import transformer,swinir,swinir_lap
+from . import transformer,swinir,swinir_lap,swinir_lap_refine
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -36,10 +36,15 @@ class LAPSWINHIHGenerator(nn.Module):
     def __init__(self, opt=None):
         super(LAPSWINHIHGenerator, self).__init__()
 
+        """
         self.swinhih = swinir_lap.LapSwinIR(upscale=1, in_chans=4, img_size=256, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
                     mlp_ratio=2, upsampler='', resi_connection='1conv')
-        
+        """
+        self.swinhih = swinir_lap_refine.LapSwinIR(upscale=1, in_chans=4, img_size=256, window_size=8,
+                    img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
+                    mlp_ratio=2, upsampler='', resi_connection='1conv')
+                
     def forward(self, inputs):
         harmonized = self.swinhih(inputs)
         return harmonized

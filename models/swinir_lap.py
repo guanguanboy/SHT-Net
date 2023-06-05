@@ -847,8 +847,8 @@ class LapSwinIR(nn.Module):
         
         x = self.check_image_size(x)
         
-        self.mean = self.mean.type_as(x)
-        x = (x - self.mean) * self.img_range
+        #self.mean = self.mean.type_as(x)
+        #x = (x - self.mean) * self.img_range
 
         if self.upsampler == 'pixelshuffle':
             # for classical SR
@@ -877,7 +877,7 @@ class LapSwinIR(nn.Module):
             #x = x + self.conv_last(res)
             x = self.conv_last(res)
 
-        x = x / self.img_range + self.mean
+        #x = x / self.img_range + self.mean
 
         #拉普拉斯重建
         x = self.get_recon_res_no_mask(pyr, x)

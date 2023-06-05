@@ -131,7 +131,7 @@ class swinhihModel(BaseModel):
 
     def compute_G_loss(self):
         """Calculate GAN and L1 loss for the generator"""
-        self.loss_G_L1 = self.criterionL1(self.harmonized, self.real)*self.opt.lambda_L1
+        self.loss_G_L1 = self.criterionL1(self.harmonized, self.real)
         self.loss_G = self.loss_G_L1
         return self.loss_G
  

@@ -750,7 +750,7 @@ class PatchUnEmbed(nn.Module):
 
     def forward(self, x, x_size):
         B, HW, C = x.shape
-        print('unembed x shape=', x.shape, x_size)
+        #print('unembed x shape=', x.shape, x_size)
         x = x.transpose(1, 2).view(B, self.embed_dim, x_size[0], x_size[1])  # B Ph*Pw C
         return x
 
@@ -1022,7 +1022,7 @@ class LapSwinIR(nn.Module):
             x = layer(x, x_size)
 
         x = self.norm(x)  # B L C
-        print('swin_ir before unembed shape=', x.shape) #1, 4096, 24
+        #print('swin_ir before unembed shape=', x.shape) #1, 4096, 24
         x = self.patch_unembed(x, x_size) #1, 24, 4096, 24
 
         return x

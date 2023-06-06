@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from models.lap_pyr_model import Lap_Pyramid_Conv,Trans_high,Trans_high_masked_residual
+from models.lap_pyr_model import Lap_Pyramid_Conv,Trans_high,Trans_high_masked_residual,Trans_high_Transformer
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -767,6 +767,7 @@ class LapSwinIR(nn.Module):
             #param.requires_grad = False
 
         self.trans_high = Trans_high(num_residual_blocks=3, num_high=2).cuda()
+        #self.trans_high = Trans_high_Transformer(num_residual_blocks=3, num_high=2).cuda()
 
         self.apply(self._init_weights)
 
@@ -901,12 +902,13 @@ if __name__ == '__main__':
     window_size = 8
     height = 1024 
     width = 1024
+    device = torch.device('cuda:0')
     model = LapSwinIR(upscale=1, in_chans=4, img_size=(256, 256),
                    window_size=window_size, img_range=1., depths=[6, 6, 6, 6],
-                   embed_dim=60, num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='')
+                   embed_dim=60, num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='').to(device)
     print(model)
     #print(height, width, model.flops() / 1e9)
 
-    x = torch.randn((1, 4, 1024, 1024))
+    x = torch.randn((1, 4, 1024, 1024)).to(device)
     x = model(x)
     print(x.shape)

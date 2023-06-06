@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+from .swinir import SwinIR
 
 class Lap_Pyramid_Conv(nn.Module):
     def __init__(self, num_high=3, device=torch.device('cpu')):
@@ -308,6 +309,54 @@ class Trans_high_masked_residual(nn.Module):
 
         return pyr_result
 
+
+class Trans_high_Transformer(nn.Module):
+    def __init__(self, num_residual_blocks, num_high=3):
+        super(Trans_high_Transformer, self).__init__()
+
+        self.num_high = num_high
+
+        #model = [nn.Conv2d(9, 64, 3, padding=1),
+            #nn.LeakyReLU()]
+
+        #for _ in range(num_residual_blocks):
+            #model += [ResidualBlock(64)]
+
+        #model += [nn.Conv2d(64, 1, 3, padding=1)]
+
+        #其实我们要做的就是把这个model换成一个transformer模型就行
+        self.model = SwinIR(upscale=1, in_chans=9, img_size=(256, 256),
+                   window_size=8, img_range=1., depths=[2],
+                   embed_dim=60, num_heads=[6], mlp_ratio=2, upsampler='')
+
+
+        for i in range(self.num_high):
+            trans_mask_block = nn.Sequential(
+                nn.Conv2d(1, 16, 1),
+                nn.LeakyReLU(),
+                nn.Conv2d(16, 1, 1))
+            setattr(self, 'trans_mask_block_{}'.format(str(i)), trans_mask_block)
+
+    def forward(self, x, pyr_original, fake_low):
+
+        pyr_result = []
+        mask = self.model(x)
+
+        for i in range(self.num_high):
+            mask = nn.functional.interpolate(mask, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3]))
+            trans_mask_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
+            mask = trans_mask_block(mask)
+            result_highfreq = torch.mul(pyr_original[-2-i], mask)
+            setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq)
+
+        for i in reversed(range(self.num_high)):
+            result_highfreq = getattr(self, 'result_highfreq_{}'.format(str(i)))
+            pyr_result.append(result_highfreq)
+
+        pyr_result.append(fake_low)
+
+        return pyr_result
+    
 def test():
     lptn_model = Lap_Pyramid_Conv(num_high=2, device='cuda')
     lptn_model = lptn_model.cuda()
@@ -331,6 +380,16 @@ def test():
     output_t_len = len(output)
     for i in range(output_t_len):
         print('output.shape =', output[i].shape)
+
+
+    high_trans = Trans_high_Transformer(num_residual_blocks=3, num_high=2)
+    lptn_model = high_trans.cuda()
+
+    output = high_trans(x, pyr_origin, fake_low)
+    output_t_len = len(output)
+    for i in range(output_t_len):
+        print('output.shape =', output[i].shape)
+
 
 if __name__ == "__main__":
     test()

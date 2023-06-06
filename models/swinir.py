@@ -652,7 +652,7 @@ class SwinIR(nn.Module):
                  **kwargs):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
-        num_out_ch = 3
+        num_out_ch = 1
         num_feat = 64
         self.img_range = img_range
         if in_chans == 3:
@@ -857,12 +857,14 @@ if __name__ == '__main__':
     window_size = 8
     height = 256 
     width = 256
+    device = torch.device('cuda:1')
+
     model = SwinIR(upscale=1, in_chans=4, img_size=(256, 256),
                    window_size=window_size, img_range=1., depths=[6, 6, 6, 6],
-                   embed_dim=60, num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='')
+                   embed_dim=60, num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='').to(device)
     print(model)
     #print(height, width, model.flops() / 1e9)
 
-    x = torch.randn((1, 4, width, height))
+    x = torch.randn((1, 4, width, height)).to(device)
     x = model(x)
     print(x.shape)

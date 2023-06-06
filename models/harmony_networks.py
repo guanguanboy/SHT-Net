@@ -39,7 +39,7 @@ class LAPSWINIHPABGenerator(nn.Module):
         super(LAPSWINIHPABGenerator, self).__init__()
 
         self.swinhih = lap_swinih_arch.LapSwinIH(upscale=1, in_chans=4, img_size=256, window_size=8,
-                    img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
+                    img_range=1., depths=[6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
                     mlp_ratio=2, upsampler='', resi_connection='1conv')
         
     def forward(self, inputs):

@@ -14,7 +14,7 @@ class lapswinihpabModel(BaseModel):
     @staticmethod
     def modify_commandline_options(parser, is_train=True):
        
-        parser.set_defaults(norm='instance', netG='SWINHIH', dataset_mode='ihd')
+        parser.set_defaults(norm='instance', netG='LAPSWINIH_PAB', dataset_mode='ihd')
         if is_train:
             parser.set_defaults(pool_size=0)
             parser.add_argument('--lambda_L1', type=float, default=100.0, help='weight for L1 loss')

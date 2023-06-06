@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from lap_pyr_model import Lap_Pyramid_Conv,Trans_high,Trans_high_masked_residual
+from models.lap_pyr_model import Lap_Pyramid_Conv,Trans_high,Trans_high_masked_residual
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):

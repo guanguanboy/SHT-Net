@@ -91,10 +91,10 @@ def main(dataset_name = None):
         real = Image.open(real_paths[i]).convert('RGB')
         mask = Image.open(mask_paths[i]).convert('1')
         if mask.size[0] != image_size:
-            harmonized = tf.resize(harmonized,[image_size,image_size], interpolation=Image.BICUBIC)
-            mask = tf.resize(mask, [image_size,image_size], interpolation=Image.BICUBIC)
-            real = tf.resize(real,[image_size,image_size], interpolation=Image.BICUBIC)
-            composite = tf.resize(composite,[image_size,image_size], interpolation=Image.BICUBIC)
+            harmonized = tf.resize(harmonized,[image_size,image_size], interpolation=Image.BILINEAR)
+            mask = tf.resize(mask, [image_size,image_size], interpolation=Image.BILINEAR)
+            real = tf.resize(real,[image_size,image_size], interpolation=Image.BILINEAR)
+            composite = tf.resize(composite,[image_size,image_size], interpolation=Image.BILINEAR)
 
         harmonized_np = np.array(harmonized, dtype=np.float32)
         real_np = np.array(real, dtype=np.float32)

@@ -21,6 +21,8 @@ def parse_args():
     parser.add_argument('--dataset_name', type=str, default='ihd', help='dataset_name')
     parser.add_argument('--evaluation_type', type=str, default="our", help='evaluation type')
     parser.add_argument('--ssim_window_size', type=int, default=11, help='ssim window size')
+    parser.add_argument('--image_size', type=int, default=1024, help='evaluation image size')
+
 
     return parser.parse_args()
 
@@ -28,7 +30,6 @@ def parse_args():
 
 def main(dataset_name = None):
     cuda = True if torch.cuda.is_available() else False
-    IMAGE_SIZE = np.array([256,256])
     opt.dataset_name = dataset_name
     files = opt.dataroot+ dataset_name + '/' + opt.dataset_name+'_'+opt.phase+'.txt'
     comp_paths = []
@@ -79,7 +80,7 @@ def main(dataset_name = None):
     fssim_scores = 0
     fore_area_count = 0
     fmse_score_list = []
-    image_size = 256
+    image_size = opt.image_size
 
     for i, harmonized_path in enumerate(tqdm(harmonized_paths)):
         count += 1

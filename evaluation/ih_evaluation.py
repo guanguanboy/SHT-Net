@@ -11,6 +11,16 @@ from skimage import data, img_as_float
 from skimage.metrics import peak_signal_noise_ratio as psnr
 from skimage.metrics import mean_squared_error as mse
 from tqdm import tqdm
+import pandas as pd
+
+def save_psnr_to_csv(df, image_name, psnr_score):
+    new_row = pd.DataFrame({
+        "fileanme":[image_name],
+        "PSNR":[psnr_score]
+    })
+    # 将新的行添加到 DataFrame 中
+    df = df.append(new_row, ignore_index=True)
+
 
 """parsing and configuration"""
 def parse_args():
@@ -22,7 +32,6 @@ def parse_args():
     parser.add_argument('--evaluation_type', type=str, default="our", help='evaluation type')
     parser.add_argument('--ssim_window_size', type=int, default=11, help='ssim window size')
     parser.add_argument('--image_size', type=int, default=1024, help='evaluation image size')
-
 
     return parser.parse_args()
 
@@ -82,6 +91,13 @@ def main(dataset_name = None):
     fmse_score_list = []
     image_size = opt.image_size
 
+    ## 打开已有表格文件或创建一个新表格
+    try:
+        csv_path = os.path.join(opt.result_root, "evaluation_output.csv")
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        df = pd.DataFrame(columns=["filename", "PSNR"])
+
     for i, harmonized_path in enumerate(tqdm(harmonized_paths)):
         count += 1
 
@@ -123,6 +139,15 @@ def main(dataset_name = None):
 
         ssim_score, fssim_score = pytorch_ssim.ssim(harmonized, real, window_size=opt.ssim_window_size, mask=mask)
 
+        #print('%s | mse %0.2f | psnr %0.2f | ssim %0.3f' % (image_name,mse_score,psnr_score, ssim_score)
+        #save_psnr_to_csv(df, image_name=harmonized_path, psnr_score=psnr_score)
+        new_row = pd.DataFrame({
+            "fileanme":[harmonized_path],
+            "PSNR":[psnr_score]
+        })
+        # 将新的行添加到 DataFrame 中
+        df = df.append(new_row, ignore_index=True)
+
         psnr_scores += psnr_score
         mse_scores += mse_score
         fmse_scores += fmse_score
@@ -145,7 +170,10 @@ def main(dataset_name = None):
 
     print(count)
     mean_sore = "%s MSE %0.2f | PSNR %0.2f | SSIM %0.4f |fMSE %0.2f | fPSNR %0.2f | fSSIM %0.4f" % (opt.dataset_name,mse_scores_mu, psnr_scores_mu,ssim_scores_mu,fmse_scores_mu,fpsnr_scores_mu,fssim_score_mu)
-    print(mean_sore)    
+    print(mean_sore)  
+
+    # 将 DataFrame 保存为表格文件
+    df.to_csv(csv_path, index=False)
 
     return mse_scores_mu,fmse_scores_mu, psnr_scores_mu,fpsnr_scores_mu
 

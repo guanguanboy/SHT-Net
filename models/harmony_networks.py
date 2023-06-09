@@ -50,7 +50,7 @@ class LAPSWINHIHGenerator(nn.Module):
     def __init__(self, opt=None):
         super(LAPSWINHIHGenerator, self).__init__()
 
-
+        """
         self.swinhih = swinir_lap.LapSwinIR(upscale=1, in_chans=4, img_size=256, window_size=8,
                     img_range=1., depths=[2, 2, 2], embed_dim=180, num_heads=[6, 6, 6],
                     mlp_ratio=2, upsampler='', resi_connection='1conv')
@@ -58,7 +58,7 @@ class LAPSWINHIHGenerator(nn.Module):
         self.swinhih = swinir_lap.LapSwinIR(upscale=1, in_chans=4, img_size=256, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
                     mlp_ratio=2, upsampler='', resi_connection='1conv')        
-        """
+
         """
         self.swinhih = swinir_lap_refine.LapSwinIR(upscale=1, in_chans=4, img_size=256, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],

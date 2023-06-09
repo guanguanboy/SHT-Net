@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from models.lap_pyr_model import Lap_Pyramid_Conv,Trans_high,Trans_high_masked_residual
+from models.lap_pyr_model import Lap_Pyramid_Conv,Trans_high,Trans_high_masked_residual,Trans_high_Transformer
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -757,6 +757,7 @@ class LapSwinIH(nn.Module):
             #param.requires_grad = False
 
         self.trans_high = Trans_high(num_residual_blocks=3, num_high=2).cuda()
+        #self.trans_high = Trans_high_Transformer(num_residual_blocks=3, num_high=2).cuda()
 
         self.apply(self._init_weights)
 

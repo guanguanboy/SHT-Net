@@ -130,7 +130,7 @@ def main(dataset_name = None):
         #psnr_score = psnr(real_np, composite_np, data_range=255)
 
         fore_area = torch.sum(mask)
-        fmse_score = torch.nn.functional.mse_loss(harmonized*mask,real*mask)*256*256/fore_area
+        fmse_score = torch.nn.functional.mse_loss(harmonized*mask,real*mask)*image_size*image_size/fore_area
 
         mse_score = mse_score.item()
         fmse_score = fmse_score.item()

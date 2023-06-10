@@ -10,7 +10,7 @@ from torchvision import models
 from util.tools import *
 from util import util
 from . import base_networks as networks_init
-from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch
+from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -38,8 +38,8 @@ class LAPSWINIHPABGenerator(nn.Module):
     def __init__(self, opt=None):
         super(LAPSWINIHPABGenerator, self).__init__()
 
-        self.swinhih = lap_swinih_arch.LapSwinIH(upscale=1, in_chans=4, img_size=256, window_size=8,
-                    img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
+        self.swinhih = lap_swinih_arch.LapSwinIH(upscale=1, in_chans=4, img_size=256, window_size=16,
+                    img_range=1., depths=[2, 4, 6, 6, 4, 2], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
                     mlp_ratio=2, upsampler='', resi_connection='1conv')
         
     def forward(self, inputs):
@@ -73,9 +73,15 @@ class SWINHIHGenerator(nn.Module):
     def __init__(self, opt=None):
         super(SWINHIHGenerator, self).__init__()
 
+        """
         self.swinhih = swinir.SwinIR(upscale=1, in_chans=4, img_size=256, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
                     mlp_ratio=2, upsampler='', resi_connection='1conv')
+        """
+        self.swinhih = swinir_ds.SwinIR_DS(upscale=1, in_chans=4, img_size=256, window_size=8,
+                    img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
+                    mlp_ratio=2, upsampler='', resi_connection='1conv')        
+        
         
     def forward(self, inputs):
         harmonized = self.swinhih(inputs)

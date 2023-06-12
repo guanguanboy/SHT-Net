@@ -28,6 +28,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = LAPSWINHIHGenerator(opt)
     elif netG == 'LAPSWINIH_PAB':
         net = LAPSWINIHPABGenerator(opt)
+    elif netG == 'IHDS':
+        net = IHDSGenerator(opt)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     net = networks_init.init_weights(net, init_type, init_gain)
@@ -73,15 +75,21 @@ class SWINHIHGenerator(nn.Module):
     def __init__(self, opt=None):
         super(SWINHIHGenerator, self).__init__()
 
-        """
         self.swinhih = swinir.SwinIR(upscale=1, in_chans=4, img_size=256, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
                     mlp_ratio=2, upsampler='', resi_connection='1conv')
-        """
+        
+    def forward(self, inputs):
+        harmonized = self.swinhih(inputs)
+        return harmonized
+
+class IHDSGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(IHDSGenerator, self).__init__()
+
         self.swinhih = swinir_ds.SwinIR_DS(upscale=1, in_chans=4, img_size=256, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=120, num_heads=[6, 6, 6, 6, 6, 6],
-                    mlp_ratio=2, upsampler='', resi_connection='1conv')        
-        
+                    mlp_ratio=2, upsampler='', resi_connection='1conv') 
         
     def forward(self, inputs):
         harmonized = self.swinhih(inputs)

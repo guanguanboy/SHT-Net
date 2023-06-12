@@ -11,6 +11,40 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_features):
+        super(ResidualBlock, self).__init__()
+
+        self.block = nn.Sequential(
+            nn.Conv2d(in_features, in_features, 3, padding=1),
+            nn.LeakyReLU(),
+            nn.Conv2d(in_features, in_features, 3, padding=1),
+        )
+
+    def forward(self, x):
+        return x + self.block(x)
+
+class Upsample(nn.Sequential):
+    """Upsample module.
+
+    Args:
+        scale (int): Scale factor. Supported scales: 2^n and 3.
+        num_feat (int): Channel number of intermediate features.
+    """
+
+    def __init__(self, scale, num_feat):
+        m = []
+        if (scale & (scale - 1)) == 0:  # scale = 2^n
+            for _ in range(int(math.log(scale, 2))):
+                m.append(nn.Conv2d(num_feat, 4 * num_feat, 3, 1, 1))
+                m.append(nn.PixelShuffle(2))
+        elif scale == 3:
+            m.append(nn.Conv2d(num_feat, 9 * num_feat, 3, 1, 1))
+            m.append(nn.PixelShuffle(3))
+        else:
+            raise ValueError(f'scale {scale} is not supported. ' 'Supported scales: 2^n and 3.')
+        super(Upsample, self).__init__(*m)
+
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
@@ -759,7 +793,40 @@ class SwinIR_DS(nn.Module):
             self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
         else:
             # for image denoising and JPEG compression artifact reduction
-            self.conv_last = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
+            self.conv_last = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1) #可以用来生成低分辨率的图像。
+
+        #创建高分辨率处理分支：
+        #input 通道当前为3
+
+        input_nc =in_chans
+        #高分辨率分支底层特征提取
+        #self.downsample = nn.AvgPool2d(3, stride=2, padding=[1, 1], count_include_pad=False),
+
+        model_downsample = [
+                            nn.ReflectionPad2d(3), nn.Conv2d(input_nc, num_feat, kernel_size=7, padding=0), 
+                            nn.BatchNorm2d(num_feat), nn.ReLU(True),
+                            nn.Conv2d(num_feat, num_feat, kernel_size=3, stride=2, padding=1), 
+                            nn.BatchNorm2d(num_feat), nn.ReLU(True),
+                            nn.Conv2d(num_feat, embed_dim, kernel_size=3, stride=2, padding=1), 
+                            nn.BatchNorm2d(embed_dim), nn.ReLU(True)]
+        
+        self.shallow_feat_extr = nn.Sequential(*model_downsample)
+
+        #resblks
+        model = []
+
+        for _ in range(4): #residual block个数为4
+            model += [ResidualBlock(embed_dim)]
+
+        self.high_resblocks = nn.Sequential(*model)
+
+        ### upsample
+        self.conv_before_upsample = nn.Sequential(
+            nn.Conv2d(embed_dim, num_feat, 3, 1, 1), nn.LeakyReLU(inplace=True))
+        self.upsample = Upsample(scale=4, num_feat=num_feat) #放大4倍。
+        
+        ### final convolution
+        self.conv_last_1024 = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)        
 
         self.apply(self._init_weights)
 
@@ -805,31 +872,33 @@ class SwinIR_DS(nn.Module):
     def forward(self, x):
         H, W = x.shape[2:]
         x = self.check_image_size(x)
-        
-        self.mean = self.mean.type_as(x)
-        x = (x - self.mean) * self.img_range
 
         #将1024分辨率使用bilinear方法下采样到256分辨率
+        x_down = torch.nn.functional.interpolate(x, scale_factor=0.25, mode='bilinear')
 
-        
         #256分辨率走如下swinir的流程。
         # for image denoising and JPEG compression artifact reduction
-        x_first = self.conv_first(x)
-        res = self.conv_after_body(self.forward_features(x_first)) + x_first
+        x_first = self.conv_first(x_down)
+        low_res_feat = self.conv_after_body(self.forward_features(x_first)) + x_first
         #x = x + self.conv_last(res)
-        x = self.conv_last(res)
-
-        x = x / self.img_range + self.mean
+        low_res_output = self.conv_last(low_res_feat)
 
         #1024分辨率的处理
 
         #使用candy提取高频结构纹理
+        #x_struecte = 
+        #x_struture_guided = torch.cat((x, mask_down), dim=1)
 
         #使用结构作为引导，使用卷积网络提取1024分辨的特征。
-
+        high_low_res_feat = self.shallow_feat_extr(x)
         #将256分支的特征与1024分支的特征进行融合并重建1024图像。可以在特征融合这里做点创新。
+        combined_feat = low_res_feat + high_low_res_feat
+        x = self.high_resblocks(combined_feat)
+        x = self.conv_before_upsample(x)
+        x = self.upsample(x)
+        x = self.conv_last_1024(x)
 
-        return x[:, :, :H*self.upscale, :W*self.upscale]
+        return x[:, :, :H*self.upscale, :W*self.upscale], low_res_output
 
     def flops(self):
         flops = 0
@@ -846,16 +915,16 @@ class SwinIR_DS(nn.Module):
 if __name__ == '__main__':
     upscale = 1
     window_size = 8
-    height = 256 
-    width = 256
+    height = 1024 
+    width = 1024
     device = torch.device('cuda:1')
 
-    model = SwinIR(upscale=1, in_chans=4, img_size=(256, 256),
-                   window_size=window_size, img_range=1., depths=[6, 6, 6, 6],
-                   embed_dim=60, num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='').to(device)
+    model = SwinIR_DS(upscale=1, in_chans=4, img_size=(256, 256),
+                   window_size=window_size, img_range=1., depths=[6, 6, 6, 6,6,6],
+                   embed_dim=120, num_heads=[6, 6, 6, 6,6,6], mlp_ratio=2, upsampler='').to(device)
     print(model)
     #print(height, width, model.flops() / 1e9)
 
     x = torch.randn((1, 4, width, height)).to(device)
-    x = model(x)
-    print(x.shape)
+    x, low_x = model(x)
+    print(x.shape, low_x.shape)

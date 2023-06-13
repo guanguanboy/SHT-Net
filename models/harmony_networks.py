@@ -674,7 +674,7 @@ def define_D(opt, input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='no
     net = networks_init.init_weights(net, init_type, init_gain)
     net = networks_init.build_model(opt, net)
 
-    return init_net(net, init_type, init_gain, gpu_ids)
+    return net
 
 
 

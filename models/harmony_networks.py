@@ -10,7 +10,7 @@ from torchvision import models
 from util.tools import *
 from util import util
 from . import base_networks as networks_init
-from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds
+from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -30,6 +30,9 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = LAPSWINIHPABGenerator(opt)
     elif netG == 'IHDS':
         net = IHDSGenerator(opt)
+    elif netG == 'LAPRESTORMER':
+        net = LAPRESTORMERGenerator(opt)
+
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     net = networks_init.init_weights(net, init_type, init_gain)
@@ -93,6 +96,25 @@ class IHDSGenerator(nn.Module):
         
     def forward(self, inputs):
         harmonized = self.swinhih(inputs)
+        return harmonized
+
+class LAPRESTORMERGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(LAPRESTORMERGenerator, self).__init__()
+
+        self.lap_restormer = lap_restormer.LapRestormer(inp_channels=4, 
+                      out_channels= 3,
+                      dim= 48,
+                      num_blocks= [4,6,6,8],
+                      num_refinement_blocks= 4,
+                      heads= [1,2,4,8],
+                      ffn_expansion_factor= 2.66,
+                      bias= False,
+                      LayerNorm_type= 'BiasFree',
+                      dual_pixel_task= False)
+        
+    def forward(self, inputs):
+        harmonized = self.lap_restormer(inputs)
         return harmonized
     
 class HTGenerator(nn.Module):

@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-from .swinir import SwinIR
+from models.swinir import SwinIR
 
 class Lap_Pyramid_Conv(nn.Module):
     def __init__(self, num_high=3, device=torch.device('cpu')):

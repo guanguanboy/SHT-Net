@@ -103,7 +103,7 @@ class IHDSGenerator(nn.Module):
 class LAPRESTORMERGenerator(nn.Module):
     def __init__(self, opt=None):
         super(LAPRESTORMERGenerator, self).__init__()
-
+        """
         self.lap_restormer = lap_restormer.LapRestormer(inp_channels=4, 
                       out_channels= 3,
                       dim= 48,
@@ -115,6 +115,18 @@ class LAPRESTORMERGenerator(nn.Module):
                       LayerNorm_type= 'BiasFree',
                       dual_pixel_task= False)
         
+        """
+        self.lap_restormer = lap_restormer.LapRestormerResidual(inp_channels=4, 
+                      out_channels= 3,
+                      dim= 48,
+                      num_blocks= [4,6,6,8],
+                      num_refinement_blocks= 4,
+                      heads= [1,2,4,8],
+                      ffn_expansion_factor= 2.66,
+                      bias= False,
+                      LayerNorm_type= 'BiasFree',
+                      dual_pixel_task= False)
+                
     def forward(self, inputs):
         harmonized = self.lap_restormer(inputs)
         return harmonized

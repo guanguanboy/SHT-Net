@@ -32,6 +32,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = IHDSGenerator(opt)
     elif netG == 'LAPRESTORMER':
         net = LAPRESTORMERGenerator(opt)
+    elif netG == 'LAPRESTORMERMUTLI':
+        net = LAPRESTORMERMULTIGenerator(opt)
 
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
@@ -116,6 +118,25 @@ class LAPRESTORMERGenerator(nn.Module):
     def forward(self, inputs):
         harmonized = self.lap_restormer(inputs)
         return harmonized
+
+class LAPRESTORMERMULTIGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(LAPRESTORMERMULTIGenerator, self).__init__()
+
+        self.lap_restormer = lap_restormer.LapRestormerMulti(inp_channels=4, 
+                      out_channels= 3,
+                      dim= 48,
+                      num_blocks= [4,6,6,8],
+                      num_refinement_blocks= 4,
+                      heads= [1,2,4,8],
+                      ffn_expansion_factor= 2.66,
+                      bias= False,
+                      LayerNorm_type= 'BiasFree',
+                      dual_pixel_task= False)
+        
+    def forward(self, inputs):
+        harmonized, low_freq = self.lap_restormer(inputs)
+        return harmonized,low_freq
     
 class HTGenerator(nn.Module):
     def __init__(self, opt=None):

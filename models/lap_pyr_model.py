@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from models.swinir import SwinIR
+#from swinir import SwinIR #for debug
 
 class Lap_Pyramid_Conv(nn.Module):
     def __init__(self, num_high=3, device=torch.device('cpu')):
@@ -220,20 +221,20 @@ class Trans_high(nn.Module):
     def forward(self, x, pyr_original, fake_low):
 
         pyr_result = []
-        mask = self.model(x)
+        mask = self.model(x) #预测得到一个这一level的高频的mask。
 
         for i in range(self.num_high):
-            mask = nn.functional.interpolate(mask, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3]))
+            mask = nn.functional.interpolate(mask, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3])) #将mask放大
             trans_mask_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
-            mask = trans_mask_block(mask)
-            result_highfreq = torch.mul(pyr_original[-2-i], mask)
-            setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq)
+            mask = trans_mask_block(mask) #转换这一层的mask
+            result_highfreq = torch.mul(pyr_original[-2-i], mask) #原始高频信号与mask相乘得到这一次的输出高频信号。
+            setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq) #将这一层的高频信号作为属性保存。
 
         for i in reversed(range(self.num_high)):
             result_highfreq = getattr(self, 'result_highfreq_{}'.format(str(i)))
-            pyr_result.append(result_highfreq)
+            pyr_result.append(result_highfreq) #取出转换后的高频信号。
 
-        pyr_result.append(fake_low)
+        pyr_result.append(fake_low) #将输出后的低频信号也加入金字塔中来。
 
         return pyr_result
 

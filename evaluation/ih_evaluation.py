@@ -146,8 +146,9 @@ def main(dataset_name = None):
             "PSNR":[psnr_score]
         })
         # 将新的行添加到 DataFrame 中
-        df = df.append(new_row, ignore_index=True)
-
+        #df = df.append(new_row, ignore_index=True)
+        df = pd.concat([df, new_row], ignore_index=True)
+        
         psnr_scores += psnr_score
         mse_scores += mse_score
         fmse_scores += fmse_score

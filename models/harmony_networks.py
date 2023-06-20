@@ -116,7 +116,7 @@ class LAPRESTORMERGenerator(nn.Module):
                       dual_pixel_task= False)
         
         """
-        self.lap_restormer = lap_restormer.LapRestormerResidual(inp_channels=4, 
+        self.lap_restormer = lap_restormer.LapRestormerWithMPRHighBranch(inp_channels=4, 
                       out_channels= 3,
                       dim= 48,
                       num_blocks= [4,6,6,8],

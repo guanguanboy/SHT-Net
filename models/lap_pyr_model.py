@@ -4,6 +4,10 @@ import torch
 from models.swinir import SwinIR
 #from swinir import SwinIR #for debug
 
+#下面的几个模块是来自MPRNet的
+from models.MPRNet import Encoder, Decoder, SAM, ORSNet,ORB
+#from MPRNet import Encoder, Decoder, SAM, ORSNet # for debug
+
 class Lap_Pyramid_Conv(nn.Module):
     def __init__(self, num_high=3, device=torch.device('cpu')):
         super(Lap_Pyramid_Conv, self).__init__()
@@ -238,6 +242,50 @@ class Trans_high(nn.Module):
 
         return pyr_result
 
+#将256分支的特征也传输到高频转换分支，并用SAM等机制实现特征的对齐。
+class Trans_high_with_SAM(nn.Module):
+    def __init__(self, num_residual_blocks, num_high=3):
+        super(Trans_high_with_SAM, self).__init__()
+
+        self.num_high = num_high
+
+        model = [nn.Conv2d(9, 64, 3, padding=1),
+            nn.LeakyReLU()]
+
+        for _ in range(num_residual_blocks):
+            model += [ResidualBlock(64)]
+
+        model += [nn.Conv2d(64, 1, 3, padding=1)]
+
+        self.model = nn.Sequential(*model)
+
+        for i in range(self.num_high):
+            trans_mask_block = nn.Sequential(
+                nn.Conv2d(1, 16, 1),
+                nn.LeakyReLU(),
+                nn.Conv2d(16, 1, 1))
+            setattr(self, 'trans_mask_block_{}'.format(str(i)), trans_mask_block)
+
+    def forward(self, x, pyr_original, fake_low):
+
+        pyr_result = []
+        mask = self.model(x) #预测得到一个这一level的高频的mask。
+
+        for i in range(self.num_high):
+            mask = nn.functional.interpolate(mask, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3])) #将mask放大
+            trans_mask_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
+            mask = trans_mask_block(mask) #转换这一层的mask
+            result_highfreq = torch.mul(pyr_original[-2-i], mask) #原始高频信号与mask相乘得到这一次的输出高频信号。
+            setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq) #将这一层的高频信号作为属性保存。
+
+        for i in reversed(range(self.num_high)):
+            result_highfreq = getattr(self, 'result_highfreq_{}'.format(str(i)))
+            pyr_result.append(result_highfreq) #取出转换后的高频信号。
+
+        pyr_result.append(fake_low) #将输出后的低频信号也加入金字塔中来。
+
+        return pyr_result
+    
 class Trans_high_residual(nn.Module):
     def __init__(self, num_residual_blocks, num_high=3):
         super(Trans_high_residual, self).__init__()
@@ -289,7 +337,199 @@ class Trans_high_residual(nn.Module):
         pyr_result.append(fake_low) #将输出后的低频信号也加入金字塔中来。
 
         return pyr_result
-    
+
+##将下面的self.model使用一个轻量级的U-Net来实现，
+class Trans_high_residual_with_UNet(nn.Module):
+    def __init__(self, num_residual_blocks, num_high=3):
+        super(Trans_high_residual_with_UNet, self).__init__()
+
+        self.num_high = num_high
+
+        self.model_convfirst = nn.Conv2d(3, 64, 3, padding=1)
+
+        self.act = nn.LeakyReLU()
+
+        self.model_encoder = Encoder(n_feat=64, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, scale_unetfeats=48, csff=False)
+        self.model_decoder = Decoder(n_feat=64, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, scale_unetfeats=48)
+
+        #for _ in range(num_residual_blocks):
+        #    model += [ResidualBlock(64)]
+        #model += [Encoder(n_feat=64, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, scale_unetfeats=48, csff=False),
+        #          Decoder(n_feat=64, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, scale_unetfeats=48)]
+        #model += [nn.Conv2d(64, 3, 3, padding=1)]
+
+        self.model_conv_last = nn.Conv2d(64, 3, 3, padding=1)
+
+        for i in range(self.num_high):
+            """
+            model = []
+            for _ in range(num_residual_blocks-1):
+                model += [ResidualBlock(64)]
+
+            model += [nn.Conv2d(64, 3, 3, padding=1)]
+            """
+            model = [nn.Conv2d(3, 64, 1),
+                nn.LeakyReLU(),
+                ORB(64, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, num_cab=4),
+                nn.Conv2d(64, 3, 1)]
+            
+            trans_residual_block = nn.Sequential(*model)
+            setattr(self, 'trans_mask_block_{}'.format(str(i)), trans_residual_block)
+
+    def forward(self, x, pyr_original, fake_low):
+
+        pyr_result = []
+
+        x_inter = self.model_convfirst(x)
+        x_inter = self.act(x_inter)
+        x_encoder_feat = self.model_encoder(x_inter)
+        x_decoder_feat = self.model_decoder(x_encoder_feat)
+
+        residual = self.model_conv_last(x_decoder_feat[0]) #预测得到一个这一level的高频的mask。
+
+        for i in range(self.num_high):
+            residual = nn.functional.interpolate(residual, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3])) #将mask放大
+            trans_residual_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
+            residual = trans_residual_block(residual) #转换这一层的mask
+            #result_highfreq = torch.mul(pyr_original[-2-i], mask) #原始高频信号与mask相乘得到这一次的输出高频信号。
+            result_highfreq = pyr_original[-2-i] + residual 
+            setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq) #将这一层的高频信号作为属性保存。
+
+        for i in reversed(range(self.num_high)):
+            result_highfreq = getattr(self, 'result_highfreq_{}'.format(str(i)))
+            pyr_result.append(result_highfreq) #取出转换后的高频信号。
+
+        pyr_result.append(fake_low) #将输出后的低频信号也加入金字塔中来。
+
+        return pyr_result
+
+
+
+##########################################################################
+def conv(in_channels, out_channels, kernel_size, bias=False, stride = 1):
+    return nn.Conv2d(
+        in_channels, out_channels, kernel_size,
+        padding=(kernel_size//2), bias=bias, stride = stride)
+
+
+class Trans_high_residual_with_encoder_decoder(nn.Module):
+    def __init__(self, num_residual_blocks, num_high=3):
+        super(Trans_high_residual, self).__init__()
+
+        self.num_high = num_high
+
+        model = [nn.Conv2d(3, 64, 3, padding=1),
+            nn.LeakyReLU()]
+
+        for _ in range(num_residual_blocks):
+            model += [ResidualBlock(64)]
+
+        model += [nn.Conv2d(64, 3, 3, padding=1)]
+
+        self.model = nn.Sequential(*model)
+
+        self.shallow_feat1 = nn.Sequential(conv(in_c, n_feat, kernel_size, bias=bias), CAB(n_feat,kernel_size, reduction, bias=bias, act=act))
+        self.shallow_feat2 = nn.Sequential(conv(in_c, n_feat, kernel_size, bias=bias), CAB(n_feat,kernel_size, reduction, bias=bias, act=act))
+        self.shallow_feat3 = nn.Sequential(conv(in_c, n_feat, kernel_size, bias=bias), CAB(n_feat,kernel_size, reduction, bias=bias, act=act))
+
+        self.stage2_encoder = Encoder(n_feat=80, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, scale_unetfeats=48, csff=True)
+        self.stage2_decoder = Decoder(n_feat=80, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, scale_unetfeats=48)
+
+        self.stage3_orsnet = ORSNet(n_feat=80, scale_orsnetfeats=32, kernel_size=3, reduction=4, act=nn.PReLU(), bias=False, scale_unetfeats=48, num_cab=8)
+
+        self.sam12 = SAM(n_feat, kernel_size=1, bias=bias)
+        self.sam23 = SAM(n_feat=80, kernel_size=1, bias=False)
+
+        self.concat23  = conv(n_feat*2, n_feat+scale_orsnetfeats, kernel_size, bias=bias)
+        self.tail     = conv(n_feat+scale_orsnetfeats, out_c, kernel_size, bias=bias)
+
+        for i in range(self.num_high):
+            """
+            model = []
+            for _ in range(num_residual_blocks-1):
+                model += [ResidualBlock(64)]
+
+            model += [nn.Conv2d(64, 3, 3, padding=1)]
+            """
+            model = [nn.Conv2d(3, 16, 1),
+                nn.LeakyReLU(),
+                nn.Conv2d(16, 3, 1)]
+            
+            trans_residual_block = nn.Sequential(*model)
+            setattr(self, 'trans_mask_block_{}'.format(str(i)), trans_residual_block)
+
+    def forward(self, x, pyr_original, fake_low):
+        x_256_img = x
+        h_512_img = pyr_original[-2]
+        h_1024_img = pyr_original[-3]
+        ##-------------------------------------------
+
+
+        ## Apply Supervised Attention Module (SAM)
+        x256_samfeats, x_256_restored_img = self.sam12(x_256_feat, x_256_orig_img)
+
+        ## Output image at Stage 1
+        stage1_img = x_256_img
+        ##-------------------------------------------
+        ##-------------- Stage 2---------------------
+        ##-------------------------------------------
+        ## Compute Shallow Features
+        x512_shallow_feat  = self.shallow_feat2(h_512_img)
+
+        ## Concatenate SAM features of Stage 1 with shallow features of Stage 2
+        x512_input_feature = self.concat12(torch.cat([x512_shallow_feat, x256_samfeats], 1))
+
+        ## Process features of both patches with Encoder of Stage 2
+        x512_endoder_feat = self.stage2_encoder(x512_input_feature, stage1_feature, stage1_img)
+
+        ## Pass features through Decoder of Stage 2
+        x512_decoder_feat = self.stage2_decoder(x512_endoder_feat)
+
+        ## Apply SAM
+        x512_samfeats, x_512_restored_img = self.sam23(x512_decoder_feat[0], h_512_img)
+
+
+        ##-------------------------------------------
+        ##-------------- Stage 3---------------------
+        ##-------------------------------------------
+        ## Compute Shallow Features
+        x3     = self.shallow_feat3(h_1024_img)
+
+        ## Concatenate SAM features of Stage 2 with shallow features of Stage 3
+        x3_cat = self.concat23(torch.cat([x3, x512_samfeats], 1))
+        
+        x3_cat = self.stage3_orsnet(x3_cat, x512_endoder_feat, x512_decoder_feat)
+
+        stage3_img = self.tail(x3_cat)
+
+        x_1024_restored_image = stage3_img + h_1024_img
+
+        return [x_1024_restored_image, x_512_restored_img, x_256_restored_img]
+
+
+"""
+        pyr_result = []
+        residual = self.model(x) #预测得到一个这一level的高频的mask。
+
+        for i in range(self.num_high):
+            residual = nn.functional.interpolate(residual, size=(pyr_original[-2-i].shape[2], pyr_original[-2-i].shape[3])) #将mask放大
+            trans_residual_block = getattr(self, 'trans_mask_block_{}'.format(str(i)))
+            residual = trans_residual_block(residual) #转换这一层的mask
+            #result_highfreq = torch.mul(pyr_original[-2-i], mask) #原始高频信号与mask相乘得到这一次的输出高频信号。
+            result_highfreq = pyr_original[-2-i] + residual 
+            setattr(self, 'result_highfreq_{}'.format(str(i)), result_highfreq) #将这一层的高频信号作为属性保存。
+
+        for i in reversed(range(self.num_high)):
+            result_highfreq = getattr(self, 'result_highfreq_{}'.format(str(i)))
+            pyr_result.append(result_highfreq) #取出转换后的高频信号。
+
+        pyr_result.append(fake_low) #将输出后的低频信号也加入金字塔中来。
+
+        return pyr_result
+
+"""
+
+
 class LPTNPaper(nn.Module):
     def __init__(self, nrb_low=5, nrb_high=3, num_high=3):
         super(LPTNPaper, self).__init__()
@@ -443,6 +683,17 @@ def test():
     for i in range(output_t_len):
         print('output.shape =', output[i].shape)
 
+    high_trans = Trans_high_residual_with_UNet(num_residual_blocks=3, num_high=2)
+    lptn_model = high_trans.cuda()
+
+    x_input = torch.randn(1, 3, 256, 256).cuda()
+    mask = torch.randn(1, 1, 256, 256).cuda()
+    fake_low = torch.randn(1, 3, 128, 128).cuda()
+
+    output = high_trans(x_input, pyr_origin, fake_low)
+    output_t_len = len(output)
+    for i in range(output_t_len):
+        print('output.shape =', output[i].shape)
 
 if __name__ == "__main__":
     test()

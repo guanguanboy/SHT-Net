@@ -10,7 +10,7 @@ from torchvision import models
 from util.tools import *
 from util import util
 from . import base_networks as networks_init
-from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer
+from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -34,6 +34,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = LAPRESTORMERGenerator(opt)
     elif netG == 'LAPRESTORMERMUTLI':
         net = LAPRESTORMERMULTIGenerator(opt)
+    elif netG == 'RESTORMER':
+        net = RESTORMERGenerator(opt)
 
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
@@ -100,6 +102,25 @@ class IHDSGenerator(nn.Module):
         harmonized = self.swinhih(inputs)
         return harmonized
 
+class RESTORMERGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(RESTORMERGenerator, self).__init__()
+        
+        self.restormer = restormer_arch.Restormer(inp_channels=4, 
+                      out_channels= 3,
+                      dim= 48,
+                      num_blocks= [4,6,6,8],
+                      num_refinement_blocks= 4,
+                      heads= [1,2,4,8],
+                      ffn_expansion_factor= 2.66,
+                      bias= False,
+                      LayerNorm_type= 'BiasFree',
+                      dual_pixel_task= False)
+                
+    def forward(self, inputs):
+        harmonized = self.restormer(inputs)
+        return harmonized
+    
 class LAPRESTORMERGenerator(nn.Module):
     def __init__(self, opt=None):
         super(LAPRESTORMERGenerator, self).__init__()

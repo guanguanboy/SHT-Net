@@ -10,7 +10,7 @@ from torchvision import models
 from util.tools import *
 from util import util
 from . import base_networks as networks_init
-from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch
+from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch
 from basicsr.models.archs import NAFNet_arch
 
 import math
@@ -40,7 +40,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = RESTORMERGenerator(opt)
     elif netG == 'NAFNet':
         net = NAFNetGenerator(opt)
-
+    elif netG == 'LAPNAFNET':
+        net = LAPNAFNetGenerator(opt)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     net = networks_init.init_weights(net, init_type, init_gain)
@@ -123,7 +124,25 @@ class NAFNetGenerator(nn.Module):
     def forward(self, inputs):
         harmonized = self.nafnet(inputs)
         return harmonized
+
+class LAPNAFNetGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(LAPNAFNetGenerator, self).__init__()
+        
+        img_channel = 4
+        width = 32
+
+        enc_blks = [1, 1, 1, 28]
+        middle_blk_num = 1
+        dec_blks = [1, 1, 1, 1]
     
+        self.nafnet = lap_NAFNet_arch.LapNAFNet(img_channel=img_channel, width=width, middle_blk_num=middle_blk_num,
+                        enc_blk_nums=enc_blks, dec_blk_nums=dec_blks)
+                
+    def forward(self, inputs):
+        harmonized = self.nafnet(inputs)
+        return harmonized
+        
 class RESTORMERGenerator(nn.Module):
     def __init__(self, opt=None):
         super(RESTORMERGenerator, self).__init__()

@@ -11,6 +11,8 @@ from util.tools import *
 from util import util
 from . import base_networks as networks_init
 from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch
+from basicsr.models.archs import NAFNet_arch
+
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -36,6 +38,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = LAPRESTORMERMULTIGenerator(opt)
     elif netG == 'RESTORMER':
         net = RESTORMERGenerator(opt)
+    elif netG == 'NAFNet':
+        net = NAFNetGenerator(opt)
 
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
@@ -102,6 +106,24 @@ class IHDSGenerator(nn.Module):
         harmonized = self.swinhih(inputs)
         return harmonized
 
+class NAFNetGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(NAFNetGenerator, self).__init__()
+        
+        img_channel = 4
+        width = 32
+
+        enc_blks = [1, 1, 1, 28]
+        middle_blk_num = 1
+        dec_blks = [1, 1, 1, 1]
+    
+        self.nafnet = NAFNet_arch.NAFNet(img_channel=img_channel, width=width, middle_blk_num=middle_blk_num,
+                        enc_blk_nums=enc_blks, dec_blk_nums=dec_blks)
+                
+    def forward(self, inputs):
+        harmonized = self.nafnet(inputs)
+        return harmonized
+    
 class RESTORMERGenerator(nn.Module):
     def __init__(self, opt=None):
         super(RESTORMERGenerator, self).__init__()

@@ -112,7 +112,7 @@ class NAFNetGenerator(nn.Module):
         super(NAFNetGenerator, self).__init__()
         
         img_channel = 4
-        width = 42 #初始设置为32
+        width = 32 #初始设置为32
 
         enc_blks = [1, 1, 1, 28]
         middle_blk_num = 1

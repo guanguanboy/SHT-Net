@@ -84,6 +84,15 @@ class IhdDataset(BaseDataset):
             transforms.ToTensor(),
             transforms.Normalize((0, 0, 0), (1, 1, 1))
         ]
+
+        #增加水平翻转
+        transform_list.append(transforms.RandomHorizontalFlip())
+
+        #增加垂直翻转
+        transform_list.append(transforms.RandomVerticalFlip())
+
+        #增加channel shuffle
+        
         self.transforms = transforms.Compose(transform_list)
         # print(len(self.image_paths))
         # assert 1==0

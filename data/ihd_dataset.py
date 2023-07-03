@@ -85,14 +85,6 @@ class IhdDataset(BaseDataset):
             transforms.Normalize((0, 0, 0), (1, 1, 1))
         ]
 
-        #增加水平翻转
-        transform_list.append(transforms.RandomHorizontalFlip())
-
-        #增加垂直翻转
-        transform_list.append(transforms.RandomVerticalFlip())
-
-        #增加channel shuffle
-        
         self.transforms = transforms.Compose(transform_list)
         # print(len(self.image_paths))
         # assert 1==0
@@ -125,15 +117,22 @@ class IhdDataset(BaseDataset):
         real = Image.open(target_path).convert('RGB')
         mask = Image.open(mask_path).convert('1')
 
+        #翻转
         if np.random.rand() > 0.5 and self.isTrain:
             comp, mask, real = tf.hflip(comp), tf.hflip(mask), tf.hflip(real)
 
+        if np.random.rand() > 0.5 and self.isTrain:
+            comp, mask, real = tf.vflip(comp), tf.vflip(mask), tf.vflip(real)
+
+
+        #if np.random.rand() > 0.5 and self.isTrain:
+             
         if comp.size[0] != self.image_size:
             # assert 0
             comp = tf.resize(comp, [self.image_size, self.image_size])
             mask = tf.resize(mask, [self.image_size, self.image_size])
             real = tf.resize(real, [self.image_size,self.image_size])
-        
+                    
         comp = self.transforms(comp)
         mask = tf.to_tensor(mask)
         # mask = 1-mask

@@ -3,8 +3,9 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 
-from basicsr.utils.registry import ARCH_REGISTRY
-from basicsr.archs.arch_util import to_2tuple, trunc_normal_
+#from basicsr.utils.registry import ARCH_REGISTRY
+#from basicsr.archs.arch_util import to_2tuple, trunc_normal_
+from timm.models.layers import to_2tuple, trunc_normal_
 
 from einops import rearrange
 
@@ -706,7 +707,7 @@ class Upsample(nn.Sequential):
         super(Upsample, self).__init__(*m)
 
 
-@ARCH_REGISTRY.register()
+#@ARCH_REGISTRY.register()
 class HAT(nn.Module):
     r""" Hybrid Attention Transformer
         A PyTorch implementation of : `Activating More Pixels in Image Super-Resolution Transformer`.

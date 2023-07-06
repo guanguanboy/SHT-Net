@@ -1421,6 +1421,7 @@ class SPAB(nn.Module):
                  drop_path=0.,
                  act_layer=nn.GELU,
                  norm_layer=nn.LayerNorm,
+                 #如下三个参数来自NAFNet
                  DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
         
         super().__init__()
@@ -1486,26 +1487,30 @@ class SPAB(nn.Module):
 
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-        
+        self.alpha = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
     def forward(self, x, x_size, rpi_sa, attn_mask):
-        h, w = x_size
-        b, _, c = x.shape
+        h, w = x_size #64*64
+        b, _, c = x.shape #b=1, c=256
         # assert seq_len == h * w, "input feature has wrong size"
 
-        shortcut = x
-        x = self.norm1(x)
-        x = x.view(b, h, w, c)
+        inp = x.view(b, h, w, c) #torch.Size([1, 64, 64, 256])
+        inp = inp.permute(0, 3, 1, 2)
+        naf_x = inp
 
-        # Conv_X
-        conv_x = self.conv_block(x.permute(0, 3, 1, 2))
-        conv_x = conv_x.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
+        naf_x = self.naf_norm1(naf_x)
 
+        naf_x = self.conv1(naf_x)
+        naf_x = self.conv2(naf_x)
+        naf_x = self.sg(naf_x) #SimpleGate
+
+        x_transformer = x.view(b, h, w, c)
         # cyclic shift
         if self.shift_size > 0:
-            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            shifted_x = torch.roll(x_transformer, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
             attn_mask = attn_mask
         else:
-            shifted_x = x
+            shifted_x = x_transformer
             attn_mask = None
 
         # partition windows
@@ -1526,38 +1531,33 @@ class SPAB(nn.Module):
             attn_x = shifted_x
         attn_x = attn_x.view(b, h * w, c)
 
-
-
-
         # FFN 的设计
-        x = shortcut + self.drop_path(attn_x) + conv_x * self.conv_scale
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        #x = shortcut + self.drop_path(attn_x) + conv_x * self.conv_scale
+        #x = x + self.drop_path(self.mlp(self.norm2(x)))
 
-        return x
+        #return x
+        naf_x = naf_x * self.sca(naf_x)
+        naf_x = self.conv3(naf_x)
+        naf_x = self.dropout1(naf_x)
 
-    """
-        x = inp
+        attn_x = self.drop_path(attn_x)
+        attn_x = attn_x.view(b, h, w, c)
+        attn_x = attn_x.permute(0, 3, 1, 2)
 
-        x = self.norm1(x)
+        y = inp + naf_x + attn_x * self.beta 
 
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.sg(x)
-        x = x * self.sca(x)
-        x = self.conv3(x)
-
-        x = self.dropout1(x)
-
-        y = inp + x * self.beta
-
-        x = self.conv4(self.norm2(y))
+        x = self.conv4(self.naf_norm2(y))
         x = self.sg(x)
         x = self.conv5(x)
 
         x = self.dropout2(x)
 
-        return y + x * self.gamma
-    """
+        result = y + x * self.gamma
+        result = result.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
+
+        return result
+    
+
 class OCAB(nn.Module):
     # overlapping cross-attention block
 
@@ -1924,7 +1924,7 @@ class SPANet(nn.Module):
         self.feature_proj = InputProj(in_channel=embed_dim*16, out_channel=embed_dim*16, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
 
         # Bottleneck
-        self.conv = BasicHATNetLayer(dim=embed_dim*16,
+        self.conv = BasicSPANetLayer(dim=embed_dim*16,
                             output_dim=embed_dim*16,
                             input_resolution=(img_size // (2 ** 4),
                                                 img_size // (2 ** 4)),

@@ -1840,83 +1840,23 @@ class SPANet(nn.Module):
         self.output_proj = OutputProj(in_channel=2*embed_dim, out_channel=in_chans, kernel_size=3, stride=1)
         
         # Encoder
-        """
-        self.encoderlayer_0 = BasicUformerLayer(dim=embed_dim,
-                            output_dim=embed_dim,
-                            input_resolution=(img_size,
-                                                img_size),
-                            depth=depths[0],
-                            num_heads=num_heads[0],
-                            win_size=win_size,
-                            mlp_ratio=self.mlp_ratio,
-                            qkv_bias=qkv_bias, qk_scale=qk_scale,
-                            drop=drop_rate, attn_drop=attn_drop_rate,
-                            drop_path=enc_dpr[sum(depths[:0]):sum(depths[:1])],
-                            norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag)
-        """
+
         chan = embed_dim
         self.encoderlayer_0 = NAFBlock(chan)
         self.dowsample_0 = nn.Conv2d(chan, 2*chan, 2, 2)
         #self.dowsample_0 = dowsample(embed_dim, embed_dim*2) 
         
-        """
-        self.encoderlayer_1 = BasicUformerLayer(dim=embed_dim*2,
-                            output_dim=embed_dim*2,
-                            input_resolution=(img_size // 2,
-                                                img_size // 2),
-                            depth=depths[1],
-                            num_heads=num_heads[1],
-                            win_size=win_size,
-                            mlp_ratio=self.mlp_ratio,
-                            qkv_bias=qkv_bias, qk_scale=qk_scale,
-                            drop=drop_rate, attn_drop=attn_drop_rate,
-                            drop_path=enc_dpr[sum(depths[:1]):sum(depths[:2])],
-                            norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag)
-        """
+
         self.encoderlayer_1 = NAFBlock(embed_dim*2)
         self.dowsample_1 = nn.Conv2d(embed_dim*2, embed_dim*4, 2, 2)
 
         #self.dowsample_1 = dowsample(embed_dim*2, embed_dim*4)
-        """
-        self.encoderlayer_2 = BasicUformerLayer(dim=embed_dim*4,
-                            output_dim=embed_dim*4,
-                            input_resolution=(img_size // (2 ** 2),
-                                                img_size // (2 ** 2)),
-                            depth=depths[2],
-                            num_heads=num_heads[2],
-                            win_size=win_size,
-                            mlp_ratio=self.mlp_ratio,
-                            qkv_bias=qkv_bias, qk_scale=qk_scale,
-                            drop=drop_rate, attn_drop=attn_drop_rate,
-                            drop_path=enc_dpr[sum(depths[:2]):sum(depths[:3])],
-                            norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag)
-        """
+
         self.encoderlayer_2 = NAFBlock(embed_dim*4)
         self.dowsample_2 = nn.Conv2d(embed_dim*4, embed_dim*8, 2, 2)
 
         #self.dowsample_2 = dowsample(embed_dim*4, embed_dim*8)
-        """
-        self.encoderlayer_3 = BasicUformerLayer(dim=embed_dim*8,
-                            output_dim=embed_dim*8,
-                            input_resolution=(img_size // (2 ** 3),
-                                                img_size // (2 ** 3)),
-                            depth=depths[3],
-                            num_heads=num_heads[3],
-                            win_size=win_size,
-                            mlp_ratio=self.mlp_ratio,
-                            qkv_bias=qkv_bias, qk_scale=qk_scale,
-                            drop=drop_rate, attn_drop=attn_drop_rate,
-                            drop_path=enc_dpr[sum(depths[:3]):sum(depths[:4])],
-                            norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag)
-        """
+ 
         self.encoderlayer_3 = NAFBlock(embed_dim*8)
         #self.dowsample_3 = dowsample(embed_dim*8, embed_dim*16)
         self.dowsample_3 = nn.Conv2d(embed_dim*8, embed_dim*16, 2, 2)
@@ -1949,69 +1889,96 @@ class SPANet(nn.Module):
 
         # Decoder
         self.upsample_0 = upsample(embed_dim*16, embed_dim*8)
-        self.decoderlayer_0 = BasicUformerLayer(dim=embed_dim*16,
+        self.decoderlayer_0 = BasicSPANetLayer(dim=embed_dim*16,
                             output_dim=embed_dim*16,
                             input_resolution=(img_size // (2 ** 3),
                                                 img_size // (2 ** 3)),
                             depth=depths[5],
                             num_heads=num_heads[5],
                             win_size=win_size,
+
+                            #HAT中增加的参数
+                            compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor,
+                            conv_scale=conv_scale,
+                            overlap_ratio=overlap_ratio,
+                            downsample=None,
+                            #HAT中增加的参数,parameters in HAB
+
                             mlp_ratio=self.mlp_ratio,
                             qkv_bias=qkv_bias, qk_scale=qk_scale,
                             drop=drop_rate, attn_drop=attn_drop_rate,
                             drop_path=dec_dpr[:depths[5]],
                             norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag,
-                            modulator=modulator,cross_modulator=cross_modulator)
+                            use_checkpoint=use_checkpoint
+                            )
         self.upsample_1 = upsample(embed_dim*16, embed_dim*4)
-        self.decoderlayer_1 = BasicUformerLayer(dim=embed_dim*8,
+        self.decoderlayer_1 = BasicSPANetLayer(dim=embed_dim*8,
                             output_dim=embed_dim*8,
                             input_resolution=(img_size // (2 ** 2),
                                                 img_size // (2 ** 2)),
                             depth=depths[6],
                             num_heads=num_heads[6],
                             win_size=win_size,
+                            #HAT中增加的参数
+                            compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor,
+                            conv_scale=conv_scale,
+                            overlap_ratio=overlap_ratio,
+                            downsample=None,
+                            #HAT中增加的参数,parameters in HAB
+                            #                             
                             mlp_ratio=self.mlp_ratio,
                             qkv_bias=qkv_bias, qk_scale=qk_scale,
                             drop=drop_rate, attn_drop=attn_drop_rate,
                             drop_path=dec_dpr[sum(depths[5:6]):sum(depths[5:7])],
                             norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag,
-                            modulator=modulator,cross_modulator=cross_modulator)
+                            use_checkpoint=use_checkpoint)
         self.upsample_2 = upsample(embed_dim*8, embed_dim*2)
-        self.decoderlayer_2 = BasicUformerLayer(dim=embed_dim*4,
+        self.decoderlayer_2 = BasicSPANetLayer(dim=embed_dim*4,
                             output_dim=embed_dim*4,
                             input_resolution=(img_size // 2,
                                                 img_size // 2),
                             depth=depths[7],
                             num_heads=num_heads[7],
                             win_size=win_size,
+                            #HAT中增加的参数
+                            compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor,
+                            conv_scale=conv_scale,
+                            overlap_ratio=overlap_ratio,
+                            downsample=None,
+                            #HAT中增加的参数,parameters in HAB
+                            #                             
                             mlp_ratio=self.mlp_ratio,
                             qkv_bias=qkv_bias, qk_scale=qk_scale,
                             drop=drop_rate, attn_drop=attn_drop_rate,
                             drop_path=dec_dpr[sum(depths[5:7]):sum(depths[5:8])],
                             norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag,
-                            modulator=modulator,cross_modulator=cross_modulator)
+                            use_checkpoint=use_checkpoint)
         self.upsample_3 = upsample(embed_dim*4, embed_dim)
-        self.decoderlayer_3 = BasicUformerLayer(dim=embed_dim*2,
+        self.decoderlayer_3 = BasicSPANetLayer(dim=embed_dim*2,
                             output_dim=embed_dim*2,
                             input_resolution=(img_size,
                                                 img_size),
                             depth=depths[8],
                             num_heads=num_heads[8],
                             win_size=win_size,
+                            
+                            #HAT中增加的参数
+                            compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor,
+                            conv_scale=conv_scale,
+                            overlap_ratio=overlap_ratio,
+                            downsample=None,
+                            #HAT中增加的参数,parameters in HAB
+                            #                             
                             mlp_ratio=self.mlp_ratio,
                             qkv_bias=qkv_bias, qk_scale=qk_scale,
                             drop=drop_rate, attn_drop=attn_drop_rate,
                             drop_path=dec_dpr[sum(depths[5:8]):sum(depths[5:9])],
                             norm_layer=norm_layer,
-                            use_checkpoint=use_checkpoint,
-                            token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag,
-                            modulator=modulator,cross_modulator=cross_modulator)
+                            use_checkpoint=use_checkpoint)
 
         self.intro = nn.Conv2d(in_channels=dd_in, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
@@ -2138,19 +2105,39 @@ class SPANet(nn.Module):
 
 
         deconv0 = torch.cat([up0,self.feat_proj_up_level3(conv3)],-1)
-        deconv0 = self.decoderlayer_0(deconv0,mask=mask)
+        deconv0_size = (conv3.shape[2], conv3.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask = self.calculate_mask(deconv0_size).to(x.device)
+        params['attn_mask'] = attn_mask
+        deconv0 = self.decoderlayer_0(deconv0, deconv0_size, params)
         
         up1 = self.upsample_1(deconv0)
         deconv1 = torch.cat([up1,self.feat_proj_up_level2(conv2)],-1)
-        deconv1 = self.decoderlayer_1(deconv1,mask=mask)
+        deconv1_size = (conv2.shape[2], conv2.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask = self.calculate_mask(deconv1_size).to(x.device)
+        params['attn_mask'] = attn_mask        
+        deconv1 = self.decoderlayer_1(deconv1,deconv1_size, params)
 
         up2 = self.upsample_2(deconv1)
         deconv2 = torch.cat([up2,self.feat_proj_up_level1(conv1)],-1)
-        deconv2 = self.decoderlayer_2(deconv2,mask=mask)
+        deconv2_size = (conv1.shape[2], conv1.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask = self.calculate_mask(deconv2_size).to(x.device)
+        params['attn_mask'] = attn_mask                
+        deconv2 = self.decoderlayer_2(deconv2, deconv2_size, params)
 
         up3 = self.upsample_3(deconv2)
         deconv3 = torch.cat([up3,self.feat_proj_up_level0(conv0)],-1)
-        deconv3 = self.decoderlayer_3(deconv3,mask=mask)
+        deconv3_size = (conv0.shape[2], conv0.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask = self.calculate_mask(deconv3_size).to(x.device)
+        params['attn_mask'] = attn_mask         
+        deconv3 = self.decoderlayer_3(deconv3, deconv3_size, params)
 
         # Output Projection
         y = self.output_proj(deconv3)
@@ -2183,7 +2170,7 @@ class SPANet(nn.Module):
 if __name__ == "__main__":
     input_size = 1024
     arch = SPANet
-    depths=[2, 2, 2, 2, 2, 2, 2, 2, 2]
+    depths=[2, 2, 2, 2, 28, 1, 1, 1, 1]
     model_restoration = SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=16,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False).cuda()
     print(model_restoration)

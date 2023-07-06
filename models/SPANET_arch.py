@@ -2104,12 +2104,12 @@ class SPANet(nn.Module):
         up0 = self.upsample_0(conv4)
 
 
-        deconv0 = torch.cat([up0,self.feat_proj_up_level3(conv3)],-1)
+        deconv0 = torch.cat([up0, self.feat_proj_up_level3(conv3)],-1)
         deconv0_size = (conv3.shape[2], conv3.shape[3])
         # Calculate attention mask and relative position index in advance to speed up inference. 
         # The original code is very time-cosuming for large window size.
-        attn_mask = self.calculate_mask(deconv0_size).to(x.device)
-        params['attn_mask'] = attn_mask
+        attn_mask1 = self.calculate_mask(deconv0_size).to(x.device)
+        params['attn_mask'] = attn_mask1
         deconv0 = self.decoderlayer_0(deconv0, deconv0_size, params)
         
         up1 = self.upsample_1(deconv0)
@@ -2117,8 +2117,8 @@ class SPANet(nn.Module):
         deconv1_size = (conv2.shape[2], conv2.shape[3])
         # Calculate attention mask and relative position index in advance to speed up inference. 
         # The original code is very time-cosuming for large window size.
-        attn_mask = self.calculate_mask(deconv1_size).to(x.device)
-        params['attn_mask'] = attn_mask        
+        attn_mask2 = self.calculate_mask(deconv1_size).to(x.device)
+        params['attn_mask'] = attn_mask2        
         deconv1 = self.decoderlayer_1(deconv1,deconv1_size, params)
 
         up2 = self.upsample_2(deconv1)
@@ -2126,8 +2126,8 @@ class SPANet(nn.Module):
         deconv2_size = (conv1.shape[2], conv1.shape[3])
         # Calculate attention mask and relative position index in advance to speed up inference. 
         # The original code is very time-cosuming for large window size.
-        attn_mask = self.calculate_mask(deconv2_size).to(x.device)
-        params['attn_mask'] = attn_mask                
+        attn_mask3 = self.calculate_mask(deconv2_size).to(x.device)
+        params['attn_mask'] = attn_mask3                
         deconv2 = self.decoderlayer_2(deconv2, deconv2_size, params)
 
         up3 = self.upsample_3(deconv2)
@@ -2135,13 +2135,14 @@ class SPANet(nn.Module):
         deconv3_size = (conv0.shape[2], conv0.shape[3])
         # Calculate attention mask and relative position index in advance to speed up inference. 
         # The original code is very time-cosuming for large window size.
-        attn_mask = self.calculate_mask(deconv3_size).to(x.device)
-        params['attn_mask'] = attn_mask         
+        attn_mask4 = self.calculate_mask(deconv3_size).to(x.device)
+        params['attn_mask'] = attn_mask4         
         deconv3 = self.decoderlayer_3(deconv3, deconv3_size, params)
 
         # Output Projection
         y = self.output_proj(deconv3)
-        return x + y if self.dd_in ==3 else y + x[:,:3,:,:]
+        output = y + x[:,:3,:,:]
+        return output
 
     def flops(self):
         flops = 0

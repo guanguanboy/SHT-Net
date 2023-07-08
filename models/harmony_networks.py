@@ -12,7 +12,7 @@ from util import util
 from . import base_networks as networks_init
 from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch
 from basicsr.models.archs import NAFNet_arch
-from . import uformer_arch,SPANET_arch
+from . import uformer_arch,SPANET_arch,fftformer_arch
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -46,6 +46,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = UFormerGenerator(opt)
     elif netG == 'SPANET':
         net = SPANetGenerator(opt)        
+    elif netG == 'FFTFORMER':
+        net = FFTFormerGenerator(opt)         
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     net = networks_init.init_weights(net, init_type, init_gain)
@@ -155,7 +157,17 @@ class SPANetGenerator(nn.Module):
     def forward(self, inputs):
         harmonized = self.spanet(inputs)
         return harmonized
+
+class FFTFormerGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(FFTFormerGenerator, self).__init__()
+        
+        self.fftformer = fftformer_arch.fftformer(inp_channels=4, out_channels=3, dim=8)
     
+    def forward(self, inputs):
+        harmonized = self.fftformer(inputs)
+        return harmonized
+        
 class LAPNAFNetGenerator(nn.Module):
     def __init__(self, opt=None):
         super(LAPNAFNetGenerator, self).__init__()

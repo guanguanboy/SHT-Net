@@ -305,15 +305,114 @@ class fftformer(nn.Module):
 
         return out_dec_level1
 
+class fftformerDeeper(nn.Module):
+    def __init__(self,
+                 inp_channels=3,
+                 out_channels=3,
+                 dim=48,
+                 num_blocks=[1, 1, 1, 16,1, 1,1,1],
+                 num_refinement_blocks=4,
+                 ffn_expansion_factor=3,
+                 bias=False,
+                 ):
+        super(fftformerDeeper, self).__init__()
+
+        self.patch_embed = OverlapPatchEmbed(inp_channels, dim)
+
+        self.encoder_level1 = nn.Sequential(*[
+            TransformerBlock(dim=dim, ffn_expansion_factor=ffn_expansion_factor, bias=bias) for i in
+            range(num_blocks[0])])
+
+        self.down1_2 = Downsample(dim)
+        self.encoder_level2 = nn.Sequential(*[
+            TransformerBlock(dim=int(dim * 2 ** 1), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias) for i in range(num_blocks[1])])
+
+        self.down2_3 = Downsample(int(dim * 2 ** 1))
+        self.encoder_level3 = nn.Sequential(*[
+            TransformerBlock(dim=int(dim * 2 ** 2), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias) for i in range(num_blocks[2])])
+        
+        self.down3_4 = Downsample(int(dim * 2 ** 2))
+        self.encoder_level4 = nn.Sequential(*[
+            TransformerBlock(dim=int(dim * 2 ** 3), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias) for i in range(num_blocks[3])])
+
+        self.decoder_level4 = nn.Sequential(*[
+            TransformerBlock(dim=int(dim * 2 ** 3), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias, att=True) for i in range(num_blocks[4])])     
+        self.up4_3 = Upsample(int(dim * 2 ** 3))
+   
+        self.decoder_level3 = nn.Sequential(*[
+            TransformerBlock(dim=int(dim * 2 ** 2), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias, att=True) for i in range(num_blocks[5])])
+
+        self.up3_2 = Upsample(int(dim * 2 ** 2))
+        self.reduce_chan_level2 = nn.Conv2d(int(dim * 2 ** 2), int(dim * 2 ** 1), kernel_size=1, bias=bias)
+        self.decoder_level2 = nn.Sequential(*[
+            TransformerBlock(dim=int(dim * 2 ** 1), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias, att=True) for i in range(num_blocks[6])])
+
+        self.up2_1 = Upsample(int(dim * 2 ** 1))
+
+        self.decoder_level1 = nn.Sequential(*[
+            TransformerBlock(dim=int(dim), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias, att=True) for i in range(num_blocks[7])])
+
+        self.refinement = nn.Sequential(*[
+            TransformerBlock(dim=int(dim), ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias, att=True) for i in range(num_refinement_blocks)])
+
+        self.fuse3 = Fuse(dim * 4)
+        self.fuse2 = Fuse(dim * 2)
+        self.fuse1 = Fuse(dim)
+        self.output = nn.Conv2d(int(dim), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
+
+    def forward(self, inp_img):
+        inp_enc_level1 = self.patch_embed(inp_img)
+        out_enc_level1 = self.encoder_level1(inp_enc_level1)
+
+        inp_enc_level2 = self.down1_2(out_enc_level1)
+        out_enc_level2 = self.encoder_level2(inp_enc_level2)
+
+        inp_enc_level3 = self.down2_3(out_enc_level2)
+        out_enc_level3 = self.encoder_level3(inp_enc_level3)
+
+        inp_enc_level4 = self.down3_4(out_enc_level3)
+        out_enc_level4 = self.encoder_level4(inp_enc_level4)
+
+        inp_dec_level3 = self.up4_3(out_enc_level4)
+
+        inp_dec_level3 = self.fuse3(inp_dec_level3, out_enc_level3)
+
+        out_dec_level3 = self.decoder_level3(inp_dec_level3)
+
+        inp_dec_level2 = self.up3_2(out_dec_level3)
+
+        inp_dec_level2 = self.fuse2(inp_dec_level2, out_enc_level2)
+
+        out_dec_level2 = self.decoder_level2(inp_dec_level2)
+
+        inp_dec_level1 = self.up2_1(out_dec_level2)
+
+        inp_dec_level1 = self.fuse1(inp_dec_level1, out_enc_level1)
+        out_dec_level1 = self.decoder_level1(inp_dec_level1)
+
+        out_dec_level1 = self.refinement(out_dec_level1)
+
+        out_dec_level1 = self.output(out_dec_level1) + inp_img[:,:3,:,:]
+
+        return out_dec_level1
+    
 if __name__ == '__main__':
     img_channel = 4
     width = 32
 
 
-    device = torch.device('cuda:2')
+    device = torch.device('cuda:1')
 
-    net = fftformer(inp_channels=4, out_channels=3, dim=8).to(device=device)
-
+    #net = fftformer(inp_channels=4, out_channels=3, dim=8).to(device=device)
+    net = fftformerDeeper(inp_channels=4, out_channels=3, dim=8).to(device=device)
 
 
     inp_img = torch.randn(1, 4, 1024, 1024).to(device=device)

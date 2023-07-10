@@ -310,7 +310,7 @@ class fftformerDeeper(nn.Module):
                  inp_channels=3,
                  out_channels=3,
                  dim=48,
-                 num_blocks=[1, 1, 1, 16,1, 1,1,1],
+                 num_blocks=[1, 1, 1, 12,1, 1,1,1],
                  num_refinement_blocks=4,
                  ffn_expansion_factor=3,
                  bias=False,

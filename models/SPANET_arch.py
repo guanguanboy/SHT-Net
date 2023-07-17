@@ -1781,7 +1781,7 @@ class BasicSPANetLayer(nn.Module):
         for blk in self.blocks:
             x = blk(x, x_size, params['rpi_sa'], params['attn_mask'])
 
-        x = self.overlap_attn(x, x_size, params['rpi_oca'])
+        #x = self.overlap_attn(x, x_size, params['rpi_oca'])
 
         if self.downsample is not None:
             x = self.downsample(x)

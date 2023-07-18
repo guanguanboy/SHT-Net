@@ -1438,7 +1438,8 @@ class NAFFeedForward(nn.Module):
         result = y + x * self.gamma
 
         return result
-    
+
+
 class SPAB(nn.Module):
     r""" Hybrid Attention Block.
 
@@ -1506,10 +1507,6 @@ class SPAB(nn.Module):
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        
-        #将self.mlp修改为1*1 conv + SimpleGate + 1*1 conve
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         #如下是NAF Block初始化
         c = dim
@@ -1528,19 +1525,11 @@ class SPAB(nn.Module):
 
         # SimpleGate
         self.sg = SimpleGate()
-
-        ffn_channel = FFN_Expand * c
-        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-
         self.naf_norm1 = LayerNorm2d(c)
-        self.naf_norm2 = LayerNorm2d(c)
 
         self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
-        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
 
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.alpha = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
         self.naf_ffn = NAFFeedForward(dim=c, ffn_expansion_factor=FFN_Expand, drop_out_rate=drop_out_rate)
@@ -1587,9 +1576,157 @@ class SPAB(nn.Module):
             attn_x = shifted_x
         attn_x = attn_x.view(b, h * w, c)
 
+        #return x
+        naf_x = naf_x * self.sca(naf_x)
+        naf_x = self.conv3(naf_x)
+        naf_x = self.dropout1(naf_x)
+
+        attn_x = self.drop_path(attn_x)
+        attn_x = attn_x.view(b, h, w, c)
+        attn_x = attn_x.permute(0, 3, 1, 2)
+
+        y = inp + naf_x + attn_x * self.beta 
+        
         # FFN 的设计
-        #x = shortcut + self.drop_path(attn_x) + conv_x * self.conv_scale
-        #x = x + self.drop_path(self.mlp(self.norm2(x)))
+        result = self.naf_ffn(y)
+
+        result = result.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
+
+        return result
+
+class SPAB_without_ffn(nn.Module):
+    r""" Simplified Parallel Attention Block.
+
+    Args:
+        dim (int): Number of input channels.
+        input_resolution (tuple[int]): Input resolution.
+        num_heads (int): Number of attention heads.
+        window_size (int): Window size.
+        shift_size (int): Shift size for SW-MSA.
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
+        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
+        drop (float, optional): Dropout rate. Default: 0.0
+        attn_drop (float, optional): Attention dropout rate. Default: 0.0
+        drop_path (float, optional): Stochastic depth rate. Default: 0.0
+        act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+    """
+
+    def __init__(self,
+                 dim,
+                 input_resolution,
+                 num_heads,
+                 window_size=7,
+                 shift_size=0,
+                 compress_ratio=3,
+                 squeeze_factor=30,
+                 conv_scale=0.01,
+                 mlp_ratio=4.,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 drop=0.,
+                 attn_drop=0.,
+                 drop_path=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm,
+                 #如下三个参数来自NAFNet
+                 DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+        
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.num_heads = num_heads
+        self.window_size = window_size
+        self.shift_size = shift_size
+        self.mlp_ratio = mlp_ratio
+        if min(self.input_resolution) <= self.window_size:
+            # if window size is larger than input resolution, we don't partition windows
+            self.shift_size = 0
+            self.window_size = min(self.input_resolution)
+        assert 0 <= self.shift_size < self.window_size, 'shift_size must in 0-window_size'
+
+        self.norm1 = norm_layer(dim)
+        self.attn = HABWindowAttention(
+            dim,
+            window_size=to_2tuple(self.window_size),
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop)
+
+        self.conv_scale = conv_scale
+        self.conv_block = CAB(num_feat=dim, compress_ratio=compress_ratio, squeeze_factor=squeeze_factor)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+
+        #如下是NAF Block初始化
+        c = dim
+        dw_channel = c * DW_Expand
+        self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel,
+                               bias=True)
+        self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        
+        # Simplified Channel Attention
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True),
+        )
+
+        # SimpleGate
+        self.sg = SimpleGate()
+        self.naf_norm1 = LayerNorm2d(c)
+
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.alpha = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self, x, x_size, rpi_sa, attn_mask):
+        h, w = x_size #64*64
+        b, _, c = x.shape #b=1, c=256
+        # assert seq_len == h * w, "input feature has wrong size"
+
+        inp = x.view(b, h, w, c) #torch.Size([1, 64, 64, 256])
+        inp = inp.permute(0, 3, 1, 2)
+        naf_x = inp
+
+        naf_x = self.naf_norm1(naf_x)
+
+        naf_x = self.conv1(naf_x)
+        naf_x = self.conv2(naf_x)
+        naf_x = self.sg(naf_x) #SimpleGate
+
+        x_transformer = x.view(b, h, w, c)
+        # cyclic shift
+        if self.shift_size > 0:
+            shifted_x = torch.roll(x_transformer, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            attn_mask = attn_mask
+        else:
+            shifted_x = x_transformer
+            attn_mask = None
+
+        # partition windows
+        x_windows = hat_window_partition(shifted_x, self.window_size)  # nw*b, window_size, window_size, c
+        x_windows = x_windows.view(-1, self.window_size * self.window_size, c)  # nw*b, window_size*window_size, c
+
+        # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
+        attn_windows = self.attn(x_windows, rpi=rpi_sa, mask=attn_mask)
+
+        # merge windows
+        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, c)
+        shifted_x = hat_window_reverse(attn_windows, self.window_size, h, w)  # b h' w' c
+
+        # reverse cyclic shift
+        if self.shift_size > 0:
+            attn_x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+        else:
+            attn_x = shifted_x
+        attn_x = attn_x.view(b, h * w, c)
 
         #return x
         naf_x = naf_x * self.sca(naf_x)
@@ -1601,12 +1738,60 @@ class SPAB(nn.Module):
         attn_x = attn_x.permute(0, 3, 1, 2)
 
         y = inp + naf_x + attn_x * self.beta 
-
-        result = self.naf_ffn(y)
         
-        result = result.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
+        return y
+ ##########################################################################
 
-        return result
+class SPATransformerBlock(nn.Module):
+    def __init__(self, dim, input_resolution, num_heads, window_size=7,
+                 shift_size=0,
+                 compress_ratio=3,
+                 squeeze_factor=30,
+                 conv_scale=0.01,
+                 mlp_ratio=4.,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 drop=0.,
+                 attn_drop=0.,
+                 drop_path=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm,
+                 #如下三个参数来自NAFNet
+                 DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+        super(SPATransformerBlock, self).__init__()
+
+        #self.norm1 = LayerNorm(dim, LayerNorm_type)
+        #self.attn = Attention(dim, num_heads, bias)
+        self.attn = SPAB_without_ffn(dim, input_resolution, num_heads,window_size=window_size,
+                 shift_size=shift_size,
+                 compress_ratio=compress_ratio,
+                 squeeze_factor=squeeze_factor,
+                 conv_scale=conv_scale,
+                 mlp_ratio=mlp_ratio,
+                 qkv_bias=qkv_bias,
+                 qk_scale=qk_scale,
+                 drop=drop,
+                 attn_drop=attn_drop,
+                 drop_path=drop_path,
+                 act_layer=act_layer,
+                 norm_layer=norm_layer,
+                 #如下三个参数来自NAFNet
+                 DW_Expand=DW_Expand, FFN_Expand=FFN_Expand, drop_out_rate=drop_out_rate)
+        #self.norm2 = LayerNorm(dim, LayerNorm_type)
+        #self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
+        self.naf_ffn = NAFFeedForward(dim=dim, ffn_expansion_factor=FFN_Expand)
+
+    def forward(self, x, x_size, rpi_sa, attn_mask):
+        h, w = x_size #64*64
+        b, _, c = x.shape #b=1, c=256
+    
+        #x = x + self.attn(self.norm1(x))
+        x = self.attn(x, x_size, rpi_sa, attn_mask)
+        #x = x + self.naf_ffn(self.norm2(x))
+        x = self.naf_ffn(x)
+        x = x.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
+
+        return x
     
 
 class OCAB(nn.Module):
@@ -1809,18 +1994,59 @@ class BasicSPANetLayer(nn.Module):
                 norm_layer=norm_layer) for i in range(depth)
         ])
 
-        # OCAB
-        self.overlap_attn = OCAB(
-                            dim=dim,
-                            input_resolution=input_resolution,
-                            window_size=window_size,
-                            overlap_ratio=overlap_ratio,
-                            num_heads=num_heads,
-                            qkv_bias=qkv_bias,
-                            qk_scale=qk_scale,
-                            mlp_ratio=mlp_ratio,
-                            norm_layer=norm_layer
-                            )
+        # patch merging layer
+        if downsample is not None:
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
+        else:
+            self.downsample = None
+
+    def forward(self, x, x_size, params):
+        for blk in self.blocks:
+            x = blk(x, x_size, params['rpi_sa'], params['attn_mask'])
+
+        if self.downsample is not None:
+            x = self.downsample(x)
+        return x
+
+class BasicSPANetLayerNew(nn.Module):
+    def __init__(self, dim, output_dim, input_resolution, depth, num_heads, win_size,
+                 #如下参数来自HAT
+                 compress_ratio,
+                 squeeze_factor,
+                 conv_scale,
+                 overlap_ratio,
+                 downsample=None,
+                 ###end
+                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, use_checkpoint=False,
+                 ):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+        
+        # build blocks
+        window_size = win_size
+        self.blocks = nn.ModuleList([
+            SPATransformerBlock(
+                dim=dim,
+                input_resolution=input_resolution,
+                num_heads=num_heads,
+                window_size=window_size,
+                shift_size=0 if (i % 2 == 0) else window_size // 2,
+                compress_ratio=compress_ratio,
+                squeeze_factor=squeeze_factor,
+                conv_scale=conv_scale,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                qk_scale=qk_scale,
+                drop=drop,
+                attn_drop=attn_drop,
+                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                norm_layer=norm_layer) for i in range(depth)
+        ])
 
         # patch merging layer
         if downsample is not None:
@@ -1832,30 +2058,10 @@ class BasicSPANetLayer(nn.Module):
         for blk in self.blocks:
             x = blk(x, x_size, params['rpi_sa'], params['attn_mask'])
 
-        #x = self.overlap_attn(x, x_size, params['rpi_oca'])
-
         if self.downsample is not None:
             x = self.downsample(x)
         return x
-
- ##########################################################################
-"""
-class TransformerBlock(nn.Module):
-    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, LayerNorm_type):
-        super(TransformerBlock, self).__init__()
-
-        self.norm1 = LayerNorm(dim, LayerNorm_type)
-        self.attn = Attention(dim, num_heads, bias)
-        self.norm2 = LayerNorm(dim, LayerNorm_type)
-        self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
-
-    def forward(self, x):
-        x = x + self.attn(self.norm1(x))
-        x = x + self.ffn(self.norm2(x))
-
-        return x
-"""
-
+    
 class SPANet(nn.Module):
     def __init__(self, img_size=256, in_chans=3, dd_in=3,
                  embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 16, 8, 4, 2],
@@ -1933,7 +2139,7 @@ class SPANet(nn.Module):
         self.feature_proj = InputProj(in_channel=embed_dim*16, out_channel=embed_dim*16, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
 
         # Bottleneck
-        self.conv = BasicSPANetLayer(dim=embed_dim*16,
+        self.conv = BasicSPANetLayerNew(dim=embed_dim*16,
                             output_dim=embed_dim*16,
                             input_resolution=(img_size // (2 ** 4),
                                                 img_size // (2 ** 4)),

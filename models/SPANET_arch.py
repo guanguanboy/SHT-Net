@@ -1692,7 +1692,7 @@ class SPAB_without_ffn(nn.Module):
         # assert seq_len == h * w, "input feature has wrong size"
 
         inp = x.view(b, h, w, c) #torch.Size([1, 64, 64, 256])
-        inp = inp.permute(0, 3, 1, 2)
+        inp = inp.permute(0, 3, 1, 2).contiguous()
         naf_x = inp
 
         naf_x = self.naf_norm1(naf_x)
@@ -1735,7 +1735,7 @@ class SPAB_without_ffn(nn.Module):
 
         attn_x = self.drop_path(attn_x)
         attn_x = attn_x.view(b, h, w, c)
-        attn_x = attn_x.permute(0, 3, 1, 2)
+        attn_x = attn_x.permute(0, 3, 1, 2).contiguous()
 
         y = inp + naf_x + attn_x * self.beta 
         

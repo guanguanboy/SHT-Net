@@ -1385,6 +1385,60 @@ class HAB(nn.Module):
 
         return x
 
+##########################################################################
+## Gated-Dconv Feed-Forward Network (GDFN)
+class FeedForward(nn.Module):
+    def __init__(self, dim, ffn_expansion_factor, bias):
+        super(FeedForward, self).__init__()
+
+        hidden_features = int(dim*ffn_expansion_factor)
+
+        self.project_in = nn.Conv2d(dim, hidden_features*2, kernel_size=1, bias=bias)
+
+        self.dwconv = nn.Conv2d(hidden_features*2, hidden_features*2, kernel_size=3, stride=1, padding=1, groups=hidden_features*2, bias=bias)
+
+        self.project_out = nn.Conv2d(hidden_features, dim, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        x = self.project_in(x)
+        x1, x2 = self.dwconv(x).chunk(2, dim=1)
+        x = F.gelu(x1) * x2
+        x = self.project_out(x)
+        return x
+
+##########################################################################
+## NAF Feed-Forward Network (NAFDFN)
+class NAFFeedForward(nn.Module):
+    def __init__(self, dim, ffn_expansion_factor, drop_out_rate=0.):
+        super(NAFFeedForward, self).__init__()
+
+        # SimpleGate
+        self.sg = SimpleGate()
+
+        c = dim
+        FFN_Expand = ffn_expansion_factor
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
+        self.naf_norm2 = LayerNorm2d(c)
+
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self, y):
+
+        x = self.conv4(self.naf_norm2(y))
+        x = self.sg(x)
+        x = self.conv5(x)
+
+        x = self.dropout2(x)
+
+        result = y + x * self.gamma
+
+        return result
+    
 class SPAB(nn.Module):
     r""" Hybrid Attention Block.
 
@@ -1489,6 +1543,8 @@ class SPAB(nn.Module):
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.alpha = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
+        self.naf_ffn = NAFFeedForward(dim=c, ffn_expansion_factor=FFN_Expand, drop_out_rate=drop_out_rate)
+
     def forward(self, x, x_size, rpi_sa, attn_mask):
         h, w = x_size #64*64
         b, _, c = x.shape #b=1, c=256
@@ -1546,13 +1602,8 @@ class SPAB(nn.Module):
 
         y = inp + naf_x + attn_x * self.beta 
 
-        x = self.conv4(self.naf_norm2(y))
-        x = self.sg(x)
-        x = self.conv5(x)
-
-        x = self.dropout2(x)
-
-        result = y + x * self.gamma
+        result = self.naf_ffn(y)
+        
         result = result.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
 
         return result
@@ -1786,7 +1837,25 @@ class BasicSPANetLayer(nn.Module):
         if self.downsample is not None:
             x = self.downsample(x)
         return x
-    
+
+ ##########################################################################
+"""
+class TransformerBlock(nn.Module):
+    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, LayerNorm_type):
+        super(TransformerBlock, self).__init__()
+
+        self.norm1 = LayerNorm(dim, LayerNorm_type)
+        self.attn = Attention(dim, num_heads, bias)
+        self.norm2 = LayerNorm(dim, LayerNorm_type)
+        self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
+
+    def forward(self, x):
+        x = x + self.attn(self.norm1(x))
+        x = x + self.ffn(self.norm2(x))
+
+        return x
+"""
+
 class SPANet(nn.Module):
     def __init__(self, img_size=256, in_chans=3, dd_in=3,
                  embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 16, 8, 4, 2],

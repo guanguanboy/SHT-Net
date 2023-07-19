@@ -77,6 +77,73 @@ class NAFBlock(nn.Module):
 
         return y + x * self.gamma
 
+def get_dwconv(dim, kernel, bias):
+    return nn.Conv2d(dim, dim, kernel_size=kernel, padding=(kernel-1)//2 ,bias=bias, groups=dim)
+
+class ScaleAwareGatedBlock(nn.Module):
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+        super().__init__()
+        dw_channel = c * DW_Expand
+        self.point_conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.depth_conv = nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=3, padding=1, stride=1, groups=dw_channel // 2, bias=True)
+        
+        self.depth_conv_7_7 = get_dwconv(dw_channel // 2, 7, bias=True)
+
+        self.ponit_conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        
+        # Simplified Channel Attention
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True),
+        )
+
+        # SimpleGate
+        self.sg = SimpleGate()
+
+        ffn_channel = FFN_Expand * c
+        self.point_wise_conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.point_conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
+        self.norm1 = LayerNorm2d(c)
+        self.norm2 = LayerNorm2d(c)
+
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self, inp):
+        x = inp
+
+        x = self.norm1(x)
+
+        x = self.point_conv1(x)
+
+        x1, x2 = x.chunk(2, dim=1)
+
+        x1 = self.depth_conv(x1)
+        x2 = self.depth_conv_7_7(x2)
+
+        #x = torch.cat([x1,x2], dim=1)
+        #x = self.sg(x)
+        
+        x = x1 * x2
+        x = x * self.sca(x)
+        x = self.ponit_conv3(x)
+
+        x = self.dropout1(x)
+
+        y = inp + x * self.beta
+
+        x = self.point_wise_conv4(self.norm2(y))
+        x = self.sg(x)
+        x = self.point_conv5(x)
+
+        x = self.dropout2(x)
+
+        return y + x * self.gamma
 
 
 class FastLeFF(nn.Module):
@@ -2117,22 +2184,22 @@ class SPANet(nn.Module):
         # Encoder
 
         chan = embed_dim
-        self.encoderlayer_0 = NAFBlock(chan)
+        self.encoderlayer_0 = ScaleAwareGatedBlock(chan)
         self.dowsample_0 = nn.Conv2d(chan, 2*chan, 2, 2)
         #self.dowsample_0 = dowsample(embed_dim, embed_dim*2) 
         
 
-        self.encoderlayer_1 = NAFBlock(embed_dim*2)
+        self.encoderlayer_1 = ScaleAwareGatedBlock(embed_dim*2)
         self.dowsample_1 = nn.Conv2d(embed_dim*2, embed_dim*4, 2, 2)
 
         #self.dowsample_1 = dowsample(embed_dim*2, embed_dim*4)
 
-        self.encoderlayer_2 = NAFBlock(embed_dim*4)
+        self.encoderlayer_2 = ScaleAwareGatedBlock(embed_dim*4)
         self.dowsample_2 = nn.Conv2d(embed_dim*4, embed_dim*8, 2, 2)
 
         #self.dowsample_2 = dowsample(embed_dim*4, embed_dim*8)
  
-        self.encoderlayer_3 = NAFBlock(embed_dim*8)
+        self.encoderlayer_3 = ScaleAwareGatedBlock(embed_dim*8)
         #self.dowsample_3 = dowsample(embed_dim*8, embed_dim*16)
         self.dowsample_3 = nn.Conv2d(embed_dim*8, embed_dim*16, 2, 2)
 
@@ -2164,18 +2231,18 @@ class SPANet(nn.Module):
 
         # Decoder
         self.upsample_0 = upsample(embed_dim*16, embed_dim*8)
-        self.decoderlayer_0 = NAFBlock(embed_dim*16)
+        self.decoderlayer_0 = ScaleAwareGatedBlock(embed_dim*16)
         self.upsample_1 = upsample(embed_dim*16, embed_dim*4)
         self.naf_upsample_1 = nn.PixelShuffle(2)
 
-        self.decoderlayer_1 = NAFBlock(embed_dim*8)
+        self.decoderlayer_1 = ScaleAwareGatedBlock(embed_dim*8)
         self.upsample_2 = upsample(embed_dim*8, embed_dim*2)
         self.naf_upsample_2 = nn.PixelShuffle(2)
         
-        self.decoderlayer_2 = NAFBlock(embed_dim*4)
+        self.decoderlayer_2 = ScaleAwareGatedBlock(embed_dim*4)
         self.upsample_3 = upsample(embed_dim*4, embed_dim)
         self.naf_upsample_3 = nn.PixelShuffle(2)
-        self.decoderlayer_3 = NAFBlock(embed_dim*2)
+        self.decoderlayer_3 = ScaleAwareGatedBlock(embed_dim*2)
 
         self.intro = nn.Conv2d(in_channels=dd_in, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)

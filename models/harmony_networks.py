@@ -150,8 +150,8 @@ class SPANetGenerator(nn.Module):
         super(SPANetGenerator, self).__init__()
         
         input_size = 1024
-        depths=[1, 1, 1, 1, 16, 1, 1, 1, 1]
-        self.spanet = SPANET_arch.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=16,depths=depths,
+        depths=[1, 1, 1, 1, 28, 1, 1, 1, 1]
+        self.spanet = SPANET_arch.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
     
     def forward(self, inputs):

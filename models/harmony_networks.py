@@ -12,7 +12,7 @@ from util import util
 from . import base_networks as networks_init
 from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch
 from basicsr.models.archs import NAFNet_arch
-from . import uformer_arch,SPANET_arch,fftformer_arch
+from . import uformer_arch,SPANET_arch,fftformer_arch,SAGNet_arch
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -124,7 +124,11 @@ class NAFNetGenerator(nn.Module):
         middle_blk_num = 1
         dec_blks = [1, 1, 1, 1]
     
+        """
         self.nafnet = NAFNet_arch.NAFNet(img_channel=img_channel, width=width, middle_blk_num=middle_blk_num,
+                        enc_blk_nums=enc_blks, dec_blk_nums=dec_blks)
+        """        
+        self.nafnet = SAGNet_arch.SAGNet(img_channel=img_channel, width=width, middle_blk_num=middle_blk_num,
                         enc_blk_nums=enc_blks, dec_blk_nums=dec_blks)
                 
     def forward(self, inputs):

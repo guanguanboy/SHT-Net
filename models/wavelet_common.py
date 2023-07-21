@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from basicsr.models.archs.arch_util import LayerNorm2d
 
 # 使用哈尔 haar 小波变换来实现二维离散小波
 def dwt_init(x):
@@ -63,6 +64,8 @@ class IWT(nn.Module):
     def forward(self, x):
         return iwt_init(x)
 
+#注意：使用的时候需要在外层先进行LayerNorm，结束之后不要忘记还有skip connection需要实现。
+#从Restormer中修改过来
 class WFFN(nn.Module):
     def __init__(self, dim, ffn_expansion_factor, bias):
 
@@ -72,8 +75,7 @@ class WFFN(nn.Module):
 
         self.project_in = nn.Conv2d(dim, hidden_features * 2, kernel_size=1, bias=bias)
 
-        self.dwconv = nn.Conv2d(hidden_features * 2, hidden_features * 2, kernel_size=3, stride=1, padding=1,
-                                groups=hidden_features * 2, bias=bias)
+        self.dwconv = nn.Conv2d(hidden_features * 2, hidden_features * 2, kernel_size=3, stride=1, padding=1, groups=hidden_features * 2, bias=bias)
 
         self.wavelet_weight = nn.Parameter(torch.ones((hidden_features * 2 *4, 1, 1)))
 
@@ -82,6 +84,8 @@ class WFFN(nn.Module):
         self.dwt = DWT()
         self.iwt = IWT()
     def forward(self, x):
+
+
         x = self.project_in(x)
 
         dwt_feats = self.dwt(x)
@@ -91,8 +95,81 @@ class WFFN(nn.Module):
         x = F.gelu(x1) * x2
         x = self.project_out(x)
         return x
-    
 
+class WFFN_NAF(nn.Module):
+    def __init__(self, dim, ffn_expansion_factor, bias, drop_out_rate=0.):
+
+        super(WFFN_NAF, self).__init__()
+
+        hidden_features = int(dim * ffn_expansion_factor)
+
+        self.project_in = nn.Conv2d(dim, hidden_features, kernel_size=1, bias=bias)
+
+        self.sg = SimpleGate()
+
+        self.wavelet_weight = nn.Parameter(torch.ones((hidden_features *4, 1, 1)))
+
+        self.project_out = nn.Conv2d(hidden_features//2, dim, kernel_size=1, bias=bias)
+
+        self.dwt = DWT()
+        self.iwt = IWT()
+
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+        self.gamma = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
+
+    def forward(self, y):
+
+
+        x = self.project_in(y)
+
+        dwt_feats = self.dwt(x)
+        dwt_feats = self.wavelet_weight * dwt_feats
+        iwt_feats = self.iwt(dwt_feats)
+        x = self.sg(iwt_feats)
+
+        x = self.project_out(x)
+
+        result = y + x * self.gamma
+
+        return result
+    
+class SimpleGate(nn.Module):
+    def forward(self, x):
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 * x2
+    
+class NAFFeedForward(nn.Module):
+    def __init__(self, dim, ffn_expansion_factor, drop_out_rate=0.):
+        super(NAFFeedForward, self).__init__()
+
+        # SimpleGate
+        self.sg = SimpleGate()
+
+        c = dim
+        FFN_Expand = ffn_expansion_factor
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
+        self.naf_norm2 = LayerNorm2d(c)
+
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self, y):
+
+        x = self.conv4(self.naf_norm2(y))
+        x = self.sg(x)
+        x = self.conv5(x)
+
+        x = self.dropout2(x)
+
+        result = y + x * self.gamma
+
+        return result
+    
 if __name__ == '__main__':
     img_channel = 4
     width = 32
@@ -110,6 +187,7 @@ if __name__ == '__main__':
     iwt_output = iwt(dwt_output)
     print(iwt_output.shape)
 
-    wffn = WFFN(dim=4,ffn_expansion_factor=1, bias=False).to(device=device)
+    #wffn = WFFN(dim=4,ffn_expansion_factor=1, bias=False).to(device=device)
+    wffn = WFFN_NAF(dim=4,ffn_expansion_factor=1, bias=False).to(device=device)
     wffn_res = wffn(inp_img)
     print(wffn_res.shape)

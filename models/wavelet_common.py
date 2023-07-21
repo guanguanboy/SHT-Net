@@ -64,6 +64,7 @@ class IWT(nn.Module):
     def forward(self, x):
         return iwt_init(x)
 
+
 #注意：使用的时候需要在外层先进行LayerNorm，结束之后不要忘记还有skip connection需要实现。
 #从Restormer中修改过来
 class WFFN(nn.Module):
@@ -107,7 +108,6 @@ class WFFN_NAF_V2(nn.Module):
 
         self.sg = SimpleGate()
 
-        self.wavelet_weight = nn.Parameter(torch.ones((self.hidden_features *4, 1, 1)))
         self.wavelet_ll_weight = nn.Parameter(torch.ones((self.hidden_features, 1, 1)))
 
         self.project_out = nn.Conv2d(self.hidden_features//2, dim, kernel_size=1, bias=bias)
@@ -125,9 +125,10 @@ class WFFN_NAF_V2(nn.Module):
         x = self.project_in(y)
 
         dwt_feats = self.dwt(x)
-        ll_freq = dwt_feats[:,0:self.hidden_features:,:,]
+        ll_freq = dwt_feats[:,0:self.hidden_features,:,:]
         ll_freq_weighted = self.wavelet_ll_weight * ll_freq
-        dwt_feats[:,0:self.hidden_features:,:,] = ll_freq_weighted
+        dwt_feats[:,0:self.hidden_features,:,:] = ll_freq_weighted
+        
         iwt_feats = self.iwt(dwt_feats)
         x = self.sg(iwt_feats)
 

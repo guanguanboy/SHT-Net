@@ -96,6 +96,49 @@ class WFFN(nn.Module):
         x = self.project_out(x)
         return x
 
+class WFFN_NAF_V2(nn.Module):
+    def __init__(self, dim, ffn_expansion_factor, bias, drop_out_rate=0.):
+
+        super(WFFN_NAF_V2, self).__init__()
+
+        self.hidden_features = int(dim * ffn_expansion_factor)
+
+        self.project_in = nn.Conv2d(dim, self.hidden_features, kernel_size=1, bias=bias)
+
+        self.sg = SimpleGate()
+
+        self.wavelet_weight = nn.Parameter(torch.ones((self.hidden_features *4, 1, 1)))
+        self.wavelet_ll_weight = nn.Parameter(torch.ones((self.hidden_features, 1, 1)))
+
+        self.project_out = nn.Conv2d(self.hidden_features//2, dim, kernel_size=1, bias=bias)
+
+        self.dwt = DWT()
+        self.iwt = IWT()
+
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+        self.gamma = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
+
+    def forward(self, y):
+
+
+        x = self.project_in(y)
+
+        dwt_feats = self.dwt(x)
+        ll_freq = dwt_feats[:,0:self.hidden_features:,:,]
+        ll_freq_weighted = self.wavelet_ll_weight * ll_freq
+        dwt_feats[:,0:self.hidden_features:,:,] = ll_freq_weighted
+        iwt_feats = self.iwt(dwt_feats)
+        x = self.sg(iwt_feats)
+
+        x = self.project_out(x)
+
+        x = self.dropout2(x)
+
+        result = x
+
+        return result
+
 class WFFN_NAF(nn.Module):
     def __init__(self, dim, ffn_expansion_factor, bias, drop_out_rate=0.):
 
@@ -130,10 +173,12 @@ class WFFN_NAF(nn.Module):
 
         x = self.project_out(x)
 
-        result = y + x * self.gamma
+        x = self.dropout2(x)
+
+        result = x
 
         return result
-    
+        
 class SimpleGate(nn.Module):
     def forward(self, x):
         x1, x2 = x.chunk(2, dim=1)
@@ -188,6 +233,6 @@ if __name__ == '__main__':
     print(iwt_output.shape)
 
     #wffn = WFFN(dim=4,ffn_expansion_factor=1, bias=False).to(device=device)
-    wffn = WFFN_NAF(dim=4,ffn_expansion_factor=1, bias=False).to(device=device)
+    wffn = WFFN_NAF_V2(dim=4,ffn_expansion_factor=2, bias=False).to(device=device)
     wffn_res = wffn(inp_img)
     print(wffn_res.shape)

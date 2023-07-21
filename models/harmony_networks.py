@@ -12,7 +12,7 @@ from util import util
 from . import base_networks as networks_init
 from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch
 from basicsr.models.archs import NAFNet_arch
-from . import uformer_arch,SPANET_arch,fftformer_arch,SAGNet_arch,NAFNet_WFFN_arch
+from . import uformer_arch,SPANET_arch,fftformer_arch,SAGNet_arch,NAFNet_WFFN_arch,SPANET_arch_backup_old
 import math
 
 def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
@@ -159,9 +159,12 @@ class SPANetGenerator(nn.Module):
         
         input_size = 1024
         depths=[1, 1, 1, 1, 28, 1, 1, 1, 1]
+        """
         self.spanet = SPANET_arch.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
-    
+        """
+        self.spanet = SPANET_arch_backup_old.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
+        
     def forward(self, inputs):
         harmonized = self.spanet(inputs)
         return harmonized

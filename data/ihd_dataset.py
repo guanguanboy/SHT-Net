@@ -127,7 +127,7 @@ class IhdDataset(BaseDataset):
 
         #if np.random.rand() > 0.5 and self.isTrain:
              
-        if comp.size[0] != self.image_size:
+        if comp.size[0] != self.image_size or comp.size[1] != self.image_size:
             # assert 0
             comp = tf.resize(comp, [self.image_size, self.image_size])
             mask = tf.resize(mask, [self.image_size, self.image_size])

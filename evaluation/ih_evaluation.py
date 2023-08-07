@@ -106,7 +106,7 @@ def main(dataset_name = None):
 
         real = Image.open(real_paths[i]).convert('RGB')
         mask = Image.open(mask_paths[i]).convert('1')
-        if mask.size[0] != image_size:
+        if mask.size[0] != image_size  or mask.size[1] != image_size:
             harmonized = tf.resize(harmonized,[image_size,image_size], interpolation=Image.BILINEAR)
             mask = tf.resize(mask, [image_size,image_size], interpolation=Image.BILINEAR)
             real = tf.resize(real,[image_size,image_size], interpolation=Image.BILINEAR)

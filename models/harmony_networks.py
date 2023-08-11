@@ -12,7 +12,7 @@ from util import util
 from . import base_networks as networks_init
 from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch
 from basicsr.models.archs import NAFNet_arch
-from . import uformer_arch,SPANET_arch,fftformer_arch,SAGNet_arch,NAFNet_WFFN_arch,SPANET_arch_backup_old
+from . import uformer_arch,SPANET_arch,fftformer_arch,SAGNet_arch,NAFNet_WFFN_arch,SPANET_arch_backup_old,SPANET_arch_backup_0717
 import math
 from thop import profile
 from thop import clever_format

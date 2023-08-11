@@ -9,6 +9,7 @@ import math
 import numpy as np
 import time
 from torch import einsum
+from util import util
 
 ###如下引入NAFBlock
 import torch
@@ -129,9 +130,14 @@ class ScaleAwareGatedBlock(nn.Module):
         #x = torch.cat([x1,x2], dim=1)
         #x = self.sg(x)
         
+        #util.save_feature_map(x1, './results/feats_maps/head3_3.png')
+        #util.save_feature_map(x1, './results/feats_maps/head7_7.png')
+
         x = x1 * x2
+        #util.save_feature_map(x, './results/feats_maps/DHIC.png')
         x = x * self.sca(x)
         x = self.ponit_conv3(x)
+        #util.save_feature_map(x, './results/feats_maps/after_fusion.png')
 
         x = self.dropout1(x)
 
@@ -1766,6 +1772,152 @@ class SPAB_without_ffn(nn.Module):
 
         naf_x = self.conv1(naf_x)
         naf_x = self.conv2(naf_x)
+        naf_x = self.sg(naf_x) #SimpleGate
+
+        x_transformer = x.view(b, h, w, c)
+        # cyclic shift
+        if self.shift_size > 0:
+            shifted_x = torch.roll(x_transformer, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            attn_mask = attn_mask
+        else:
+            shifted_x = x_transformer
+            attn_mask = None
+
+        # partition windows
+        x_windows = hat_window_partition(shifted_x, self.window_size)  # nw*b, window_size, window_size, c
+        x_windows = x_windows.view(-1, self.window_size * self.window_size, c)  # nw*b, window_size*window_size, c
+
+        # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
+        attn_windows = self.attn(x_windows, rpi=rpi_sa, mask=attn_mask)
+
+        # merge windows
+        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, c)
+        shifted_x = hat_window_reverse(attn_windows, self.window_size, h, w)  # b h' w' c
+
+        # reverse cyclic shift
+        if self.shift_size > 0:
+            attn_x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+        else:
+            attn_x = shifted_x
+        attn_x = attn_x.view(b, h * w, c)
+
+        #return x
+        naf_x = naf_x * self.sca(naf_x)
+        naf_x = self.conv3(naf_x)
+        naf_x = self.dropout1(naf_x)
+
+        attn_x = self.drop_path(attn_x)
+        attn_x = attn_x.view(b, h, w, c)
+        attn_x = attn_x.permute(0, 3, 1, 2).contiguous()
+
+        y = inp + naf_x + attn_x * self.beta 
+        
+        return y
+
+class SPAB_without_simplegate(nn.Module):
+    r""" Simplified Parallel Attention Block.
+
+    Args:
+        dim (int): Number of input channels.
+        input_resolution (tuple[int]): Input resolution.
+        num_heads (int): Number of attention heads.
+        window_size (int): Window size.
+        shift_size (int): Shift size for SW-MSA.
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
+        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
+        drop (float, optional): Dropout rate. Default: 0.0
+        attn_drop (float, optional): Attention dropout rate. Default: 0.0
+        drop_path (float, optional): Stochastic depth rate. Default: 0.0
+        act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+    """
+
+    def __init__(self,
+                 dim,
+                 input_resolution,
+                 num_heads,
+                 window_size=7,
+                 shift_size=0,
+                 compress_ratio=3,
+                 squeeze_factor=30,
+                 conv_scale=0.01,
+                 mlp_ratio=4.,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 drop=0.,
+                 attn_drop=0.,
+                 drop_path=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm,
+                 #如下三个参数来自NAFNet
+                 DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+        
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.num_heads = num_heads
+        self.window_size = window_size
+        self.shift_size = shift_size
+        self.mlp_ratio = mlp_ratio
+        if min(self.input_resolution) <= self.window_size:
+            # if window size is larger than input resolution, we don't partition windows
+            self.shift_size = 0
+            self.window_size = min(self.input_resolution)
+        assert 0 <= self.shift_size < self.window_size, 'shift_size must in 0-window_size'
+
+        self.norm1 = norm_layer(dim)
+        self.attn = HABWindowAttention(
+            dim,
+            window_size=to_2tuple(self.window_size),
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop)
+
+        self.conv_scale = conv_scale
+        self.conv_block = CAB(num_feat=dim, compress_ratio=compress_ratio, squeeze_factor=squeeze_factor)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+
+        #如下是NAF Block初始化
+        c = dim
+        dw_channel = c * DW_Expand
+        self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel,
+                               bias=True)
+        self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        
+        # Simplified Channel Attention
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True),
+        )
+
+        # SimpleGate
+        self.sg = SimpleGate()
+        self.naf_norm1 = LayerNorm2d(c)
+
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.alpha = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self, x, x_size, rpi_sa, attn_mask):
+        h, w = x_size #64*64
+        b, _, c = x.shape #b=1, c=256
+        # assert seq_len == h * w, "input feature has wrong size"
+
+        inp = x.view(b, h, w, c) #torch.Size([1, 64, 64, 256])
+        inp = inp.permute(0, 3, 1, 2).contiguous()
+        naf_x = inp
+
+        naf_x = self.naf_norm1(naf_x)
+
+        naf_x = self.conv1(naf_x)
         naf_x = self.sg(naf_x) #SimpleGate
 
         x_transformer = x.view(b, h, w, c)

@@ -36,7 +36,7 @@ class SPANetModel(BaseModel):
         self.opt.device = self.device
         self.netG = networks.define_G(opt.netG, opt.init_type, opt.init_gain, self.opt)
         
-        print(self.netG)  
+        #print(self.netG)  
 
         if self.isTrain:
             util.saveprint(self.opt, 'netG', str(self.netG))  
@@ -44,7 +44,8 @@ class SPANetModel(BaseModel):
             self.criterionL1 = torch.nn.L1Loss()
             self.criterionL2 = torch.nn.MSELoss()
             self.criterionPSNR = Myloss.PSNRLoss()
-
+            self.criterionSSIM = Myloss.SSIM()
+            
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)

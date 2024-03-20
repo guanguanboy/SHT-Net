@@ -10,7 +10,7 @@ from torchvision import models
 from util.tools import *
 from util import util
 from . import base_networks as networks_init
-from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch
+from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch, SHTNet_arch
 from basicsr.models.archs import NAFNet_arch
 from . import uformer_arch,SPANET_arch,fftformer_arch,SAGNet_arch,NAFNet_WFFN_arch,SPANET_arch_backup_old,SPANET_arch_backup_0717
 import math
@@ -51,6 +51,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         #net = SPANetGenerator(opt)        
     elif netG == 'FFTFORMER':
         net = FFTFormerGenerator(opt)         
+    elif netG == "SHTNet":
+        net = SHTNetGenerator(opt)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     net = networks_init.init_weights(net, init_type, init_gain)
@@ -156,6 +158,37 @@ class UFormerGenerator(nn.Module):
         harmonized = self.uformer(inputs)
         return harmonized
 
+class SHTNetGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(SHTNetGenerator, self).__init__()
+        
+        input_size = 1024
+        depths=[1, 1, 1, 1, 28, 1, 1, 1, 1]
+
+        self.shtnet = SHTNet_arch.SHTNet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
+                 win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
+        
+        self.evaluate_efficiency(image_size = 1024)
+
+    def evaluate_efficiency(self,image_size = 256):
+        size = image_size
+        gt = torch.randn((1,3,size,size)).cuda()
+        cond = torch.randn(1,4,size,size).cuda()
+        mask = torch.randn(1,1,size,size).cuda()
+
+        self.spanet = self.spanet.cuda()
+        flops, params = profile(self.spanet, inputs=(cond,))
+        flops, params = clever_format([flops, params], '%.3f')
+
+        print('params=', params)
+        print('FLOPs=',flops)
+        """
+        self.spanet = SPANET_arch_backup_old.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
+        """
+    def forward(self, inputs):
+        harmonized_small, harmonized = self.shtnet(inputs)
+        return harmonized_small, harmonized
+    
 class SPANetSmallGenerator(nn.Module):
     def __init__(self, opt=None):
         super(SPANetSmallGenerator, self).__init__()

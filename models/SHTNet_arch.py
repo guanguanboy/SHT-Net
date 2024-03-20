@@ -2719,10 +2719,12 @@ class SHTNet(nn.Module):
         self.feat_proj_up_level1 = InputProj(in_channel=embed_dim*2, out_channel=embed_dim*2, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
         self.feat_proj_up_level0 = InputProj(in_channel=embed_dim, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
 
-        self.ending = nn.Conv2d(in_channels=embed_dim//8, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-        self.ending_small = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
+        
+        self.ending_small = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+
+        self.ending_expand = nn.Conv2d(in_channels=3, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.ending = nn.Conv2d(in_channels=embed_dim, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+
         self.apply(self._init_weights)
 
         self.upsample = nn.PixelShuffle(4)
@@ -2892,19 +2894,22 @@ class SHTNet(nn.Module):
         params['attn_mask'] = attn_mask4         
         deconv3 = self.decoderlayer_3(deconv3)
 
-        small_output = self.ending_small(deconv3)
+        small_residual = self.ending_small(deconv3)
+        small_output = small_residual + x[:,:3,:,:]
 
-        up_4 = self.upsample(deconv3)
+        #up_4 = self.upsample(deconv3)
         # Output Projection
-        y = self.ending(up_4)
+        full_residual = F.interpolate(small_residual, (1024,1024), mode='bilinear', align_corners=False)
+
 
         global enhanced_image_count
         enhanced_image_count = enhanced_image_count + 1
         #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
 
-        
+        residual_expand = self.ending_expand(full_residual)
+        refined_residual = self.ending(residual_expand)
         #output = y + inputs[:,:3,:,:]
-        output = self.enhance(inputs[:,:3,:,:], y)
+        output = inputs[:,:3,:,:] + refined_residual
 
         return small_output, output
     

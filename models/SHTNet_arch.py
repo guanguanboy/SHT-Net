@@ -2722,13 +2722,14 @@ class SHTNet(nn.Module):
         
         self.ending_small = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
 
-        self.ending_expand = nn.Conv2d(in_channels=3, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.ending_expand = nn.Conv2d(in_channels=3*2, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
         self.ending = nn.Conv2d(in_channels=embed_dim, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
 
         self.apply(self._init_weights)
-
-        self.upsample = nn.PixelShuffle(4)
+        
+        self.upsample = nn.UpsamplingBilinear2d(scale_factor=4)
         #self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
@@ -2899,14 +2900,15 @@ class SHTNet(nn.Module):
 
         #up_4 = self.upsample(deconv3)
         # Output Projection
-        full_residual = F.interpolate(small_residual, (1024,1024), mode='bilinear', align_corners=False)
-
+        #full_residual = F.interpolate(small_residual, (1024,1024), mode='bilinear', align_corners=False)
+        full_output = self.upsample(small_output)
 
         global enhanced_image_count
         enhanced_image_count = enhanced_image_count + 1
         #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
 
-        residual_expand = self.ending_expand(full_residual)
+        refined_input = torch.cat([inputs[:,:3,:,:], full_output], dim=1)
+        residual_expand = self.ending_expand(refined_input)
         refined_residual = self.ending(residual_expand)
         #output = y + inputs[:,:3,:,:]
         output = inputs[:,:3,:,:] + refined_residual

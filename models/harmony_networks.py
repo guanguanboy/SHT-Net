@@ -176,7 +176,7 @@ class SHTNetGenerator(nn.Module):
         cond = torch.randn(1,4,size,size).cuda()
         mask = torch.randn(1,1,size,size).cuda()
 
-        self.spanet = self.spanet.cuda()
+        self.spanet = self.shtnet.cuda()
         flops, params = profile(self.spanet, inputs=(cond,))
         flops, params = clever_format([flops, params], '%.3f')
 

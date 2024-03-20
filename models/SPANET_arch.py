@@ -2723,7 +2723,9 @@ class SPANetSmall(nn.Module):
                               bias=True)
         self.apply(self._init_weights)
 
-        self.upsample = nn.PixelShuffle(4)
+        self.upsample = nn.UpsamplingBilinear2d(scale_factor=4)
+        self.ending_small = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+
         #self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -2890,9 +2892,11 @@ class SPANetSmall(nn.Module):
         params['attn_mask'] = attn_mask4         
         deconv3 = self.decoderlayer_3(deconv3)
 
-        up_4 = self.upsample(deconv3)
+        small_transform = self.ending_small(deconv3)
+
+        full_transform = self.upsample(small_transform)
         # Output Projection
-        y = self.ending(up_4)
+        #y = self.ending(up_4)
 
         global enhanced_image_count
         enhanced_image_count = enhanced_image_count + 1
@@ -2900,7 +2904,7 @@ class SPANetSmall(nn.Module):
 
         
         #output = y + inputs[:,:3,:,:]
-        output = self.enhance(inputs[:,:3,:,:], y)
+        output = self.enhance(inputs[:,:3,:,:], full_transform)
 
         return output
     
@@ -2908,7 +2912,7 @@ if __name__ == "__main__":
     input_size = 1024
     arch = SPANet
     depths=[2, 2, 2, 2, 28, 1, 1, 1, 1]
-    model_restoration = SPANetSmall(img_size=input_size, in_chans=3, dd_in=4, embed_dim=16,depths=depths,
+    model_restoration = SPANetSmall(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False).cuda()
     print(model_restoration)
     # from ptflops import get_model_complexity_info

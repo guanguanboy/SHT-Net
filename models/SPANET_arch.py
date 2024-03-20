@@ -9,7 +9,7 @@ import math
 import numpy as np
 import time
 from torch import einsum
-from util import util
+#from util import util
 
 ###如下引入NAFBlock
 import torch
@@ -17,6 +17,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from basicsr.models.archs.arch_util import LayerNorm2d
 from basicsr.models.archs.local_arch import Local_Base
+
+enhanced_image_count = 0
 
 class SimpleGate(nn.Module):
     def forward(self, x):
@@ -2561,7 +2563,12 @@ class SPANet(nn.Module):
 
         # Output Projection
         y = self.ending(deconv3)
+        global enhanced_image_count
+        enhanced_image_count = enhanced_image_count + 1
+        #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
+
         output = y + x[:,:3,:,:]
+
         return output
 
     def flops(self):
@@ -2588,11 +2595,320 @@ class SPANet(nn.Module):
         return flops
 
 
+class SPANetSmall(nn.Module):
+    def __init__(self, img_size=256, in_chans=3, dd_in=3,
+                 embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 16, 8, 4, 2],
+                 win_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
+                 norm_layer=nn.LayerNorm, patch_norm=True,
+                 use_checkpoint=False, token_projection='linear', token_mlp='leff',
+                 dowsample=Downsample, upsample=Upsample, shift_flag=True, modulator=False, 
+                 cross_modulator=False, 
+                 ##如下参数来自HAT
+                 compress_ratio=3,
+                 squeeze_factor=30,
+                 conv_scale=0.01,
+                 overlap_ratio=0.5,
+                 **kwargs):
+        super().__init__()
+
+        self.num_enc_layers = len(depths)//2
+        self.num_dec_layers = len(depths)//2
+        self.embed_dim = embed_dim
+        self.patch_norm = patch_norm
+        self.mlp_ratio = mlp_ratio
+        self.token_projection = token_projection
+        self.mlp = token_mlp
+        self.win_size =win_size
+        self.reso = img_size
+        self.pos_drop = nn.Dropout(p=drop_rate)
+        self.dd_in = dd_in
+
+        # stochastic depth
+        enc_dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths[:self.num_enc_layers]))] 
+        conv_dpr = [drop_path_rate]*depths[4]
+        dec_dpr = enc_dpr[::-1]
+
+        ##如下来自HAT的初始化
+        # build layers
+        self.window_size = win_size
+        self.shift_size = win_size // 2
+        self.overlap_ratio = overlap_ratio
+
+        # relative position index
+        relative_position_index_SA = self.calculate_rpi_sa()
+        relative_position_index_OCA = self.calculate_rpi_oca()
+        self.register_buffer('relative_position_index_SA', relative_position_index_SA)
+        self.register_buffer('relative_position_index_OCA', relative_position_index_OCA)
+
+        #如上是来自HAT的初始化
+
+        # Input/Output，如下两个函数起的作用与patch_embed和patch_unembed这两个函数是相同的
+        self.input_proj = InputProj(in_channel=dd_in, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU) 
+        self.output_proj = OutputProj(in_channel=2*embed_dim, out_channel=in_chans, kernel_size=3, stride=1)
+        
+        # Encoder
+
+        chan = embed_dim
+        self.encoderlayer_0 = ScaleAwareGatedBlock(chan)
+        self.dowsample_0 = nn.Conv2d(chan, 2*chan, 2, 2)
+        #self.dowsample_0 = dowsample(embed_dim, embed_dim*2) 
+        
+
+        self.encoderlayer_1 = ScaleAwareGatedBlock(embed_dim*2)
+        self.dowsample_1 = nn.Conv2d(embed_dim*2, embed_dim*4, 2, 2)
+
+        #self.dowsample_1 = dowsample(embed_dim*2, embed_dim*4)
+
+        self.encoderlayer_2 = ScaleAwareGatedBlock(embed_dim*4)
+        self.dowsample_2 = nn.Conv2d(embed_dim*4, embed_dim*8, 2, 2)
+
+        #self.dowsample_2 = dowsample(embed_dim*4, embed_dim*8)
+ 
+        self.encoderlayer_3 = ScaleAwareGatedBlock(embed_dim*8)
+        #self.dowsample_3 = dowsample(embed_dim*8, embed_dim*16)
+        self.dowsample_3 = nn.Conv2d(embed_dim*8, embed_dim*16, 2, 2)
+
+        self.feature_proj = InputProj(in_channel=embed_dim*16, out_channel=embed_dim*16, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+
+        # Bottleneck
+        self.conv = BasicSPANetLayerNew(dim=embed_dim*16,
+                            output_dim=embed_dim*16,
+                            input_resolution=(img_size // (2 ** 4),
+                                                img_size // (2 ** 4)),
+                            depth=depths[4],
+                            num_heads=num_heads[4],
+                            win_size=win_size,
+
+                            #HAT中增加的参数
+                            compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor,
+                            conv_scale=conv_scale,
+                            overlap_ratio=overlap_ratio,
+                            downsample=None,
+                            #HAT中增加的参数,parameters in HAB
+
+                            mlp_ratio=self.mlp_ratio,
+                            qkv_bias=qkv_bias, qk_scale=qk_scale,
+                            drop=drop_rate, attn_drop=attn_drop_rate,
+                            drop_path=conv_dpr,
+                            norm_layer=norm_layer,
+                            use_checkpoint=use_checkpoint)
+
+        # Decoder
+        self.upsample_0 = upsample(embed_dim*16, embed_dim*8)
+        self.decoderlayer_0 = ScaleAwareGatedBlock(embed_dim*16)
+        self.upsample_1 = upsample(embed_dim*16, embed_dim*4)
+        self.naf_upsample_1 = nn.PixelShuffle(2)
+
+        self.decoderlayer_1 = ScaleAwareGatedBlock(embed_dim*8)
+        self.upsample_2 = upsample(embed_dim*8, embed_dim*2)
+        self.naf_upsample_2 = nn.PixelShuffle(2)
+        
+        self.decoderlayer_2 = ScaleAwareGatedBlock(embed_dim*4)
+        self.upsample_3 = upsample(embed_dim*4, embed_dim)
+        self.naf_upsample_3 = nn.PixelShuffle(2)
+        self.decoderlayer_3 = ScaleAwareGatedBlock(embed_dim*2)
+
+        self.intro = nn.Conv2d(in_channels=dd_in, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.input_proj = InputProj(in_channel=dd_in, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        
+        self.feat_proj_up_level3 = InputProj(in_channel=embed_dim*8, out_channel=embed_dim*8, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level2 = InputProj(in_channel=embed_dim*4, out_channel=embed_dim*4, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level1 = InputProj(in_channel=embed_dim*2, out_channel=embed_dim*2, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level0 = InputProj(in_channel=embed_dim, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+
+        self.ending = nn.Conv2d(in_channels=2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.apply(self._init_weights)
+
+        self.upsample = nn.PixelShuffle(4)
+        #self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def calculate_rpi_sa(self):
+        # calculate relative position index for SA
+        coords_h = torch.arange(self.window_size)
+        coords_w = torch.arange(self.window_size)
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.window_size - 1
+        relative_coords[:, :, 0] *= 2 * self.window_size - 1
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        return relative_position_index
+
+    def calculate_rpi_oca(self):
+        # calculate relative position index for OCA
+        window_size_ori = self.window_size
+        window_size_ext = self.window_size + int(self.overlap_ratio * self.window_size)
+
+        coords_h = torch.arange(window_size_ori)
+        coords_w = torch.arange(window_size_ori)
+        coords_ori = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, ws, ws
+        coords_ori_flatten = torch.flatten(coords_ori, 1)  # 2, ws*ws
+
+        coords_h = torch.arange(window_size_ext)
+        coords_w = torch.arange(window_size_ext)
+        coords_ext = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, wse, wse
+        coords_ext_flatten = torch.flatten(coords_ext, 1)  # 2, wse*wse
+
+        relative_coords = coords_ext_flatten[:, None, :] - coords_ori_flatten[:, :, None]   # 2, ws*ws, wse*wse
+
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # ws*ws, wse*wse, 2
+        relative_coords[:, :, 0] += window_size_ori - window_size_ext + 1  # shift to start from 0
+        relative_coords[:, :, 1] += window_size_ori - window_size_ext + 1
+
+        relative_coords[:, :, 0] *= window_size_ori + window_size_ext - 1
+        relative_position_index = relative_coords.sum(-1)
+        return relative_position_index
+
+    def calculate_mask(self, x_size):
+        # calculate attention mask for SW-MSA
+        h, w = x_size
+        img_mask = torch.zeros((1, h, w, 1))  # 1 h w 1
+        h_slices = (slice(0, -self.window_size), slice(-self.window_size,
+                                                       -self.shift_size), slice(-self.shift_size, None))
+        w_slices = (slice(0, -self.window_size), slice(-self.window_size,
+                                                       -self.shift_size), slice(-self.shift_size, None))
+        cnt = 0
+        for h in h_slices:
+            for w in w_slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = hat_window_partition(img_mask, self.window_size)  # nw, window_size, window_size, 1
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+
+        return attn_mask
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'absolute_pos_embed'}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
+    def extra_repr(self) -> str:
+        return f"embed_dim={self.embed_dim}, token_projection={self.token_projection}, token_mlp={self.mlp},win_size={self.win_size}"
+
+    def enhance(self, x,x_r):
+		
+        x = x + x_r*(torch.pow(x,2)-x)
+        x = x + x_r*(torch.pow(x,2)-x)
+        x = x + x_r*(torch.pow(x,2)-x)
+        enhance_image_1 = x + x_r*(torch.pow(x,2)-x)		
+        x = enhance_image_1 + x_r*(torch.pow(enhance_image_1,2)-enhance_image_1)		
+        x = x + x_r*(torch.pow(x,2)-x)	
+        x = x + x_r*(torch.pow(x,2)-x)
+        enhance_image = x + x_r*(torch.pow(x,2)-x)
+        return enhance_image
+
+    def forward(self, inputs, mask=None):
+        # Input Projection
+        #y = self.input_proj(x)
+        #y = self.pos_drop(y)
+
+        params = {'rpi_sa': self.relative_position_index_SA, 'rpi_oca': self.relative_position_index_OCA}
+
+        x = F.interpolate(inputs, (256,256), mode='bilinear', align_corners=False)
+        #mask = F.interpolate(mask, self.input_size, mode='bilinear', align_corners=False)
+
+        y = self.intro(x)
+
+        #Encoder
+        conv0 = self.encoderlayer_0(y)
+        pool0 = self.dowsample_0(conv0)
+        conv1 = self.encoderlayer_1(pool0)
+        pool1 = self.dowsample_1(conv1)
+        conv2 = self.encoderlayer_2(pool1)
+        pool2 = self.dowsample_2(conv2)
+        conv3 = self.encoderlayer_3(pool2)
+        pool3 = self.dowsample_3(conv3)
+
+        pool3_size = (pool3.shape[2], pool3.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask = self.calculate_mask(pool3_size).to(x.device)
+        params['attn_mask'] = attn_mask
+
+        pool3 = self.feature_proj(pool3)
+        # Bottleneck
+        #conv4 = self.conv(pool3, mask=mask)
+        conv4 = self.conv(pool3, pool3_size, params)
+        #Decoder
+        up0 = self.upsample_0(conv4)
+        b, _, c = up0.shape
+        up0 = up0.view(b, conv3.shape[2], conv3.shape[3], c) #torch.Size([1, 64, 64, 256])
+        up0 = up0.permute(0, 3, 1, 2)
+
+        deconv0 = torch.cat([up0, conv3],1)
+        deconv0_size = (conv3.shape[2], conv3.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask1 = self.calculate_mask(deconv0_size).to(x.device)
+        params['attn_mask'] = attn_mask1
+        deconv0 = self.decoderlayer_0(deconv0)
+        
+        up1 = self.naf_upsample_1(deconv0)
+        deconv1 = torch.cat([up1,conv2],1)
+        deconv1_size = (conv2.shape[2], conv2.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask2 = self.calculate_mask(deconv1_size).to(x.device)
+        params['attn_mask'] = attn_mask2        
+        deconv1 = self.decoderlayer_1(deconv1)
+
+        up2 = self.naf_upsample_2(deconv1)
+        deconv2 = torch.cat([up2,conv1],1)
+        deconv2_size = (conv1.shape[2], conv1.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask3 = self.calculate_mask(deconv2_size).to(x.device)
+        params['attn_mask'] = attn_mask3                
+        deconv2 = self.decoderlayer_2(deconv2)
+
+        up3 = self.naf_upsample_3(deconv2)
+        deconv3 = torch.cat([up3,conv0],1)
+        deconv3_size = (conv0.shape[2], conv0.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask4 = self.calculate_mask(deconv3_size).to(x.device)
+        params['attn_mask'] = attn_mask4         
+        deconv3 = self.decoderlayer_3(deconv3)
+
+        up_4 = self.upsample(deconv3)
+        # Output Projection
+        y = self.ending(up_4)
+
+        global enhanced_image_count
+        enhanced_image_count = enhanced_image_count + 1
+        #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
+
+        
+        #output = y + inputs[:,:3,:,:]
+        output = self.enhance(inputs[:,:3,:,:], y)
+
+        return output
+    
 if __name__ == "__main__":
     input_size = 1024
     arch = SPANet
     depths=[2, 2, 2, 2, 28, 1, 1, 1, 1]
-    model_restoration = SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=16,depths=depths,
+    model_restoration = SPANetSmall(img_size=input_size, in_chans=3, dd_in=4, embed_dim=16,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False).cuda()
     print(model_restoration)
     # from ptflops import get_model_complexity_info

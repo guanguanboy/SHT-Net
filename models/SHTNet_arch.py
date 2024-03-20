@@ -2719,9 +2719,9 @@ class SHTNet(nn.Module):
         self.feat_proj_up_level1 = InputProj(in_channel=embed_dim*2, out_channel=embed_dim*2, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
         self.feat_proj_up_level0 = InputProj(in_channel=embed_dim, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
 
-        self.ending = nn.Conv2d(in_channels=2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
+        self.ending = nn.Conv2d(in_channels=embed_dim//8, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
-        self.ending_small = nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
+        self.ending_small = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
         self.apply(self._init_weights)
 
@@ -2912,7 +2912,7 @@ if __name__ == "__main__":
     input_size = 1024
     arch = SPANet
     depths=[2, 2, 2, 2, 28, 1, 1, 1, 1]
-    model_restoration = SHTNet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=16,depths=depths,
+    model_restoration = SHTNet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False).cuda()
     #print(model_restoration[0].shape, model_restoration[1].shape)
     # from ptflops import get_model_complexity_info

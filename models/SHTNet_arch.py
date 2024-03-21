@@ -2909,12 +2909,12 @@ class SHTNet(nn.Module):
         #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
 
         #refined_input = torch.cat([inputs[:,:3,:,:], full_output], dim=1)
-        residual_expand = self.ending_expand(full_output)
-        output = self.ending(residual_expand)
+        #residual_expand = self.ending_expand(full_output)
+        #output = self.ending(residual_expand)
         #output = y + inputs[:,:3,:,:]
         #output = inputs[:,:3,:,:] + refined_residual
 
-        return small_output, output
+        return small_output, full_output
     
 if __name__ == "__main__":
     input_size = 1024

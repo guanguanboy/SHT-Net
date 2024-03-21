@@ -2722,7 +2722,7 @@ class SHTNet(nn.Module):
         
         self.ending_small = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
 
-        self.ending_expand = nn.Conv2d(in_channels=3*2, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.ending_expand = nn.Conv2d(in_channels=3, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
         self.ending = nn.Conv2d(in_channels=embed_dim, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
 
         self.apply(self._init_weights)
@@ -2896,22 +2896,23 @@ class SHTNet(nn.Module):
         deconv3 = self.decoderlayer_3(deconv3)
 
         small_residual = self.ending_small(deconv3)
-        small_output = small_residual + x[:,:3,:,:]
+        small_output = self.enhance(x[:,:3,:,:], small_residual)
 
         #up_4 = self.upsample(deconv3)
         # Output Projection
         #full_residual = F.interpolate(small_residual, (1024,1024), mode='bilinear', align_corners=False)
-        full_output = self.upsample(small_output)
+        full_transform = self.upsample(small_residual)
+        full_output = self.enhance(inputs[:,:3,:,:], full_transform)
 
         global enhanced_image_count
         enhanced_image_count = enhanced_image_count + 1
         #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
 
-        refined_input = torch.cat([inputs[:,:3,:,:], full_output], dim=1)
-        residual_expand = self.ending_expand(refined_input)
-        refined_residual = self.ending(residual_expand)
+        #refined_input = torch.cat([inputs[:,:3,:,:], full_output], dim=1)
+        residual_expand = self.ending_expand(full_output)
+        output = self.ending(residual_expand)
         #output = y + inputs[:,:3,:,:]
-        output = inputs[:,:3,:,:] + refined_residual
+        #output = inputs[:,:3,:,:] + refined_residual
 
         return small_output, output
     

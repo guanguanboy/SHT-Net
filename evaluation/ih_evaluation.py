@@ -182,7 +182,7 @@ def generstr(dataset_name='ALL'):
     #datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night','IHD']
     datasets = ['HAdobe5k']
     if dataset_name == 'newALL':
-        datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night','HVIDIT','newIHD']
+        datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night']
     for i, item in enumerate(datasets):
         print(item)
         mse_scores_mu,fmse_scores_mu, psnr_scores_mu,fpsnr_scores_mu = main(dataset_name=item)

@@ -2909,10 +2909,10 @@ class SPANetSmall(nn.Module):
         return output
     
 if __name__ == "__main__":
-    input_size = 1024
+    input_size = 256
     arch = SPANet
     depths=[2, 2, 2, 2, 28, 1, 1, 1, 1]
-    model_restoration = SPANetSmall(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
+    model_restoration = SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False).cuda()
     print(model_restoration)
     # from ptflops import get_model_complexity_info
@@ -2923,8 +2923,8 @@ if __name__ == "__main__":
     #print('# model_restoration parameters: %.2f M'%(sum(param.numel() for param in model_restoration.parameters())/ 1e6))
     #print("number of GFLOPs: %.2f G"%(model_restoration.flops() / 1e9))
 
-    height = 1024 
-    width = 1024
+    height = 256 
+    width = 256
     x = torch.randn((1, 4, width, height)).cuda()
     x = model_restoration(x)
     print(x.shape)

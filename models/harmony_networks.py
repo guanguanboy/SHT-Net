@@ -47,12 +47,14 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
     elif netG == 'UFORMER':
         net = UFormerGenerator(opt)
     elif netG == 'SPANET':
-        net = SPANetSmallGenerator(opt)
-        #net = SPANetGenerator(opt)        
+        net = SPANetGenerator(opt)
     elif netG == 'FFTFORMER':
         net = FFTFormerGenerator(opt)         
     elif netG == "SHTNet":
         net = SHTNetGenerator(opt)
+    elif netG == "SPANETSMALL":
+        net = SPANetSmallGenerator(opt)
+
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     net = networks_init.init_weights(net, init_type, init_gain)
@@ -224,13 +226,13 @@ class SPANetGenerator(nn.Module):
     def __init__(self, opt=None):
         super(SPANetGenerator, self).__init__()
         
-        input_size = 1024
+        input_size = 256
         depths=[1, 1, 1, 1, 28, 1, 1, 1, 1]
 
-        self.spanet = SPANET_arch.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=16,depths=depths,
+        self.spanet = SPANET_arch.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
         
-        self.evaluate_efficiency(image_size = 1024)
+        self.evaluate_efficiency(image_size = 256)
 
         """
         self.spanet = SPANET_arch_backup_old.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)

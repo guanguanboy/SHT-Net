@@ -52,7 +52,7 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = FFTFormerGenerator(opt)         
     elif netG == "SHTNet":
         net = SHTNetGenerator(opt)
-    elif netG == "SPANETSMALL":
+    elif netG == "SPASMALL":
         net = SPANetSmallGenerator(opt)
 
     else:
@@ -227,11 +227,15 @@ class SPANetGenerator(nn.Module):
         super(SPANetGenerator, self).__init__()
         
         input_size = 256
-        depths=[1, 1, 1, 1, 28, 1, 1, 1, 1]
+        depths=[1, 1, 1, 1, 8, 1, 1, 1,1]
 
+        """
         self.spanet = SPANET_arch.SPANet(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
+        """
         
+        depths=[1, 1, 1, 8, 1, 1, 1]
+        self.spanet = SPANET_arch.SPANetScable3Stages(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths, win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
         self.evaluate_efficiency(image_size = 256)
 
         """

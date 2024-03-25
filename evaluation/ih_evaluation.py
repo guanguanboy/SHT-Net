@@ -40,7 +40,12 @@ def parse_args():
 def main(dataset_name = None):
     cuda = True if torch.cuda.is_available() else False
     opt.dataset_name = dataset_name
+    
+    if 'IHD' == opt.dataset_name:
+        dataset_name = ''
+
     files = opt.dataroot+ dataset_name + '/' + opt.dataset_name+'_'+opt.phase+'.txt'
+
     comp_paths = []
     harmonized_paths = []
     mask_paths = []
@@ -48,19 +53,29 @@ def main(dataset_name = None):
     with open(files,'r') as f:
             for line in f.readlines():
                 name_str = line.rstrip()
+                if 'IHD' == opt.dataset_name:
+                    name_str=name_str.split('/')[-1]
+
                 if opt.evaluation_type == 'our':
+                    if 'IHD' == opt.dataset_name:
+                        harmonized_path = os.path.join(opt.result_root,name_str[:-4] + '_harmonized.jpg')
+
                     harmonized_path = os.path.join(opt.result_root,name_str[:-4] + '_harmonized.jpg')
                     comp_path = os.path.join(opt.dataroot, dataset_name, 'composite_images', line.rstrip())
+                    if 'IHD' == opt.dataset_name:
+                        comp_path = os.path.join(opt.dataroot, line.rstrip())
 
                     #print(harmonized_path)
                     if os.path.exists(harmonized_path):
-                        real_path = os.path.join(opt.dataroot, dataset_name, 'real_images',line.rstrip())
+                        #real_path = os.path.join(opt.dataroot, dataset_name, 'real_images',line.rstrip())
+                        real_path = comp_path.replace('composite_images', 'real_images')
 
                         name_parts=real_path.split('_')
                         real_path = real_path.replace(('_'+name_parts[-2]+'_'+name_parts[-1]),'.jpg')
                         #print('real_path=', real_path)
 
-                        mask_path = os.path.join(opt.dataroot,dataset_name, 'masks',line.rstrip())
+                        #mask_path = os.path.join(opt.dataroot,dataset_name, 'masks',line.rstrip())
+                        mask_path = comp_path.replace('composite_images', 'masks')
                         mask_path = mask_path.replace(('_'+name_parts[-1]),'.png')
 
                 elif opt.evaluation_type == 'ori':
@@ -182,7 +197,9 @@ def generstr(dataset_name='ALL'):
     #datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night','IHD']
     datasets = ['HAdobe5k']
     if dataset_name == 'newALL':
-        datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night']
+        datasets = ['HCOCO','HAdobe5k','HFlickr','Hday2night','IHD']
+        #datasets = ['IHD']
+
     for i, item in enumerate(datasets):
         print(item)
         mse_scores_mu,fmse_scores_mu, psnr_scores_mu,fpsnr_scores_mu = main(dataset_name=item)

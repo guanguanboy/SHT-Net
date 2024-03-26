@@ -227,7 +227,7 @@ class SPANetGenerator(nn.Module):
         super(SPANetGenerator, self).__init__()
         
         input_size = 256
-        depths=[2, 2, 2, 2, 2, 2, 2, 2,2]
+        depths=[1, 1, 1, 1, 2, 1, 1, 1,1]
         
         self.spanet = SPANET_arch.SPANetScable(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths, win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
         

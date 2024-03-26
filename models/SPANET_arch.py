@@ -2011,7 +2011,69 @@ class SPATransformerBlock(nn.Module):
         #x = x + self.naf_ffn(self.norm2(x))
         x = self.naf_ffn(x)
         x = x.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
+        
+        return x
+    
+class MaskedSPATransformerBlock(nn.Module):
+    def __init__(self, dim, input_resolution, num_heads, window_size=7,
+                 shift_size=0,
+                 compress_ratio=3,
+                 squeeze_factor=30,
+                 conv_scale=0.01,
+                 mlp_ratio=4.,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 drop=0.,
+                 attn_drop=0.,
+                 drop_path=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm,
+                 #如下三个参数来自NAFNet
+                 DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+        super(MaskedSPATransformerBlock, self).__init__()
 
+        #self.norm1 = LayerNorm(dim, LayerNorm_type)
+        #self.attn = Attention(dim, num_heads, bias)
+        self.attn = SPAB_without_ffn(dim, input_resolution, num_heads,window_size=window_size,
+                 shift_size=shift_size,
+                 compress_ratio=compress_ratio,
+                 squeeze_factor=squeeze_factor,
+                 conv_scale=conv_scale,
+                 mlp_ratio=mlp_ratio,
+                 qkv_bias=qkv_bias,
+                 qk_scale=qk_scale,
+                 drop=drop,
+                 attn_drop=attn_drop,
+                 drop_path=drop_path,
+                 act_layer=act_layer,
+                 norm_layer=norm_layer,
+                 #如下三个参数来自NAFNet
+                 DW_Expand=DW_Expand, FFN_Expand=FFN_Expand, drop_out_rate=drop_out_rate)
+        #self.norm2 = LayerNorm(dim, LayerNorm_type)
+        #self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
+        self.naf_ffn = NAFFeedForward(dim=dim, ffn_expansion_factor=FFN_Expand)
+
+    def forward(self, x, x_size, rpi_sa, attn_mask, mask):
+        h, w = x_size #64*64
+        b, _, c = x.shape #b=1, c=256
+    
+        #x = x + self.attn(self.norm1(x))
+        x = self.attn(x, x_size, rpi_sa, attn_mask)
+        #x = x + self.naf_ffn(self.norm2(x))
+        x = self.naf_ffn(x)
+        #print(x.shape)
+        mask = F.interpolate(mask.detach(), size=x.size()[2:], mode='nearest')
+        #mask = mask.unsqueeze(1) 
+        #inv_msak = 1 - mask
+        #guide_mask = torch.cat((mask, inv_msak), 1)   
+        
+        #x = torch.sum(x * guide_mask, dim=1)
+        #print(x.shape, mask.shape) 
+        x = x*mask
+
+        x = x.permute(0, 2, 3, 1).contiguous().view(b, h * w, c)
+
+        
         return x
     
 
@@ -2281,6 +2343,61 @@ class BasicSPANetLayerNew(nn.Module):
 
         if self.downsample is not None:
             x = self.downsample(x)
+        return x
+
+class MaskedSPANetLayer(nn.Module):
+    def __init__(self, dim, output_dim, input_resolution, depth, num_heads, win_size,
+                 #如下参数来自HAT
+                 compress_ratio,
+                 squeeze_factor,
+                 conv_scale,
+                 overlap_ratio,
+                 downsample=None,
+                 ###end
+                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, use_checkpoint=False,
+                 ):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+        
+        # build blocks
+        window_size = win_size
+        self.blocks = nn.ModuleList([
+            MaskedSPATransformerBlock(
+                dim=dim,
+                input_resolution=input_resolution,
+                num_heads=num_heads,
+                window_size=window_size,
+                shift_size=0 if (i % 2 == 0) else window_size // 2,
+                compress_ratio=compress_ratio,
+                squeeze_factor=squeeze_factor,
+                conv_scale=conv_scale,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                qk_scale=qk_scale,
+                drop=drop,
+                attn_drop=attn_drop,
+                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                norm_layer=norm_layer) for i in range(depth)
+        ])
+
+        # patch merging layer
+        if downsample is not None:
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
+        else:
+            self.downsample = None
+
+    def forward(self, x, x_size, params, mask):
+        for blk in self.blocks:
+            x = blk(x, x_size, params['rpi_sa'], params['attn_mask'],mask)
+
+        if self.downsample is not None:
+            x = self.downsample(x)
+
         return x
     
 class SPANet(nn.Module):
@@ -3232,6 +3349,616 @@ class SPANetScable(nn.Module):
         flops += self.output_proj.flops(self.reso,self.reso)
         return flops
 
+class SPANetScableMasked(nn.Module):
+    def __init__(self, img_size=256, in_chans=3, dd_in=3,
+                 embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 16, 8, 4, 2],
+                 win_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
+                 norm_layer=nn.LayerNorm, patch_norm=True,
+                 use_checkpoint=False, token_projection='linear', token_mlp='leff',
+                 dowsample=Downsample, upsample=Upsample, shift_flag=True, modulator=False, 
+                 cross_modulator=False, 
+                 ##如下参数来自HAT
+                 compress_ratio=3,
+                 squeeze_factor=30,
+                 conv_scale=0.01,
+                 overlap_ratio=0.5,
+                 **kwargs):
+        super().__init__()
+        print('depths==', depths)
+        self.num_enc_layers = len(depths)//2
+        self.num_dec_layers = len(depths)//2
+        self.stage_nums = len(depths)//2
+        self.embed_dim = embed_dim
+        self.patch_norm = patch_norm
+        self.mlp_ratio = mlp_ratio
+        self.token_projection = token_projection
+        self.mlp = token_mlp
+        self.win_size =win_size
+        self.reso = img_size
+        self.pos_drop = nn.Dropout(p=drop_rate)
+        self.dd_in = dd_in
+
+        # stochastic depth
+        enc_dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths[:self.num_enc_layers]))] 
+        conv_dpr = [drop_path_rate]*depths[4]
+        dec_dpr = enc_dpr[::-1]
+
+        ##如下来自HAT的初始化
+        # build layers
+        self.window_size = win_size
+        self.shift_size = win_size // 2
+        self.overlap_ratio = overlap_ratio
+
+        # relative position index
+        relative_position_index_SA = self.calculate_rpi_sa()
+        relative_position_index_OCA = self.calculate_rpi_oca()
+        self.register_buffer('relative_position_index_SA', relative_position_index_SA)
+        self.register_buffer('relative_position_index_OCA', relative_position_index_OCA)
+
+        #如上是来自HAT的初始化
+
+        # Input/Output，如下两个函数起的作用与patch_embed和patch_unembed这两个函数是相同的
+        self.input_proj = InputProj(in_channel=dd_in, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU) 
+        self.output_proj = OutputProj(in_channel=2*embed_dim, out_channel=in_chans, kernel_size=3, stride=1)
+        
+        # Encoder
+
+        chan = embed_dim
+        self.encoderlayer_0 = nn.ModuleList([ScaleAwareGatedBlock(chan) for i in range(depths[0])])
+        self.dowsample_0 = nn.Conv2d(chan, 2*chan, 2, 2)
+        #self.dowsample_0 = dowsample(embed_dim, embed_dim*2) 
+        
+
+        self.encoderlayer_1 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*2) for i in range(depths[1])])
+        self.dowsample_1 = nn.Conv2d(embed_dim*2, embed_dim*4, 2, 2)
+
+        #self.dowsample_1 = dowsample(embed_dim*2, embed_dim*4)
+
+        self.encoderlayer_2 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*4) for i in range(depths[2])])
+        self.dowsample_2 = nn.Conv2d(embed_dim*4, embed_dim*8, 2, 2)
+
+        #self.dowsample_2 = dowsample(embed_dim*4, embed_dim*8)
+ 
+        self.encoderlayer_3 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*8) for i in range(depths[3])])
+        #self.dowsample_3 = dowsample(embed_dim*8, embed_dim*16)
+        self.dowsample_3 = nn.Conv2d(embed_dim*8, embed_dim*16, 2, 2)
+
+        self.feature_proj = InputProj(in_channel=embed_dim*16, out_channel=embed_dim*16, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+
+        # Bottleneck
+        self.bottleneck = MaskedSPANetLayer(dim=embed_dim*16,
+                            output_dim=embed_dim*16,
+                            input_resolution=(img_size // (2 ** 4),
+                                                img_size // (2 ** 4)),
+                            depth=depths[self.stage_nums],
+                            num_heads=num_heads[4],
+                            win_size=win_size,
+
+                            #HAT中增加的参数
+                            compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor,
+                            conv_scale=conv_scale,
+                            overlap_ratio=overlap_ratio,
+                            downsample=None,
+                            #HAT中增加的参数,parameters in HAB
+
+                            mlp_ratio=self.mlp_ratio,
+                            qkv_bias=qkv_bias, qk_scale=qk_scale,
+                            drop=drop_rate, attn_drop=attn_drop_rate,
+                            drop_path=conv_dpr,
+                            norm_layer=norm_layer,
+                            use_checkpoint=use_checkpoint)
+
+        # Decoder
+        self.upsample_0 = upsample(embed_dim*16, embed_dim*8)
+        self.decoderlayer_0 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*16) for i in range(depths[len(depths)-4])])
+        self.upsample_1 = upsample(embed_dim*16, embed_dim*4)
+        self.naf_upsample_1 = nn.PixelShuffle(2)
+
+        self.decoderlayer_1 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*8) for i in range(depths[len(depths)-3])])
+        self.upsample_2 = upsample(embed_dim*8, embed_dim*2)
+        self.naf_upsample_2 = nn.PixelShuffle(2)
+        
+        self.decoderlayer_2 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*4) for i in range(depths[len(depths)-2])])
+        self.upsample_3 = upsample(embed_dim*4, embed_dim)
+        self.naf_upsample_3 = nn.PixelShuffle(2)
+        self.decoderlayer_3 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*2) for i in range(depths[len(depths)-1])])
+
+        self.intro = nn.Conv2d(in_channels=dd_in, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.input_proj = InputProj(in_channel=dd_in, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        
+        self.feat_proj_up_level3 = InputProj(in_channel=embed_dim*8, out_channel=embed_dim*8, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level2 = InputProj(in_channel=embed_dim*4, out_channel=embed_dim*4, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level1 = InputProj(in_channel=embed_dim*2, out_channel=embed_dim*2, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level0 = InputProj(in_channel=embed_dim, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+
+        self.ending = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def calculate_rpi_sa(self):
+        # calculate relative position index for SA
+        coords_h = torch.arange(self.window_size)
+        coords_w = torch.arange(self.window_size)
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.window_size - 1
+        relative_coords[:, :, 0] *= 2 * self.window_size - 1
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        return relative_position_index
+
+    def calculate_rpi_oca(self):
+        # calculate relative position index for OCA
+        window_size_ori = self.window_size
+        window_size_ext = self.window_size + int(self.overlap_ratio * self.window_size)
+
+        coords_h = torch.arange(window_size_ori)
+        coords_w = torch.arange(window_size_ori)
+        coords_ori = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, ws, ws
+        coords_ori_flatten = torch.flatten(coords_ori, 1)  # 2, ws*ws
+
+        coords_h = torch.arange(window_size_ext)
+        coords_w = torch.arange(window_size_ext)
+        coords_ext = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, wse, wse
+        coords_ext_flatten = torch.flatten(coords_ext, 1)  # 2, wse*wse
+
+        relative_coords = coords_ext_flatten[:, None, :] - coords_ori_flatten[:, :, None]   # 2, ws*ws, wse*wse
+
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # ws*ws, wse*wse, 2
+        relative_coords[:, :, 0] += window_size_ori - window_size_ext + 1  # shift to start from 0
+        relative_coords[:, :, 1] += window_size_ori - window_size_ext + 1
+
+        relative_coords[:, :, 0] *= window_size_ori + window_size_ext - 1
+        relative_position_index = relative_coords.sum(-1)
+        return relative_position_index
+
+    def calculate_mask(self, x_size):
+        # calculate attention mask for SW-MSA
+        h, w = x_size
+        img_mask = torch.zeros((1, h, w, 1))  # 1 h w 1
+        h_slices = (slice(0, -self.window_size), slice(-self.window_size,
+                                                       -self.shift_size), slice(-self.shift_size, None))
+        w_slices = (slice(0, -self.window_size), slice(-self.window_size,
+                                                       -self.shift_size), slice(-self.shift_size, None))
+        cnt = 0
+        for h in h_slices:
+            for w in w_slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = hat_window_partition(img_mask, self.window_size)  # nw, window_size, window_size, 1
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+
+        return attn_mask
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'absolute_pos_embed'}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
+    def extra_repr(self) -> str:
+        return f"embed_dim={self.embed_dim}, token_projection={self.token_projection}, token_mlp={self.mlp},win_size={self.win_size}"
+
+    def forward(self, x, mask=None):
+        # Input Projection
+        #y = self.input_proj(x)
+        #y = self.pos_drop(y)
+
+        params = {'rpi_sa': self.relative_position_index_SA, 'rpi_oca': self.relative_position_index_OCA}
+       
+        y = self.intro(x)
+
+        #Encoder
+        for blk in self.encoderlayer_0:
+            y = blk(y)
+        conv0 = y
+        y = self.dowsample_0(y)
+
+        for blk in self.encoderlayer_1:
+            y = blk(y)
+        conv1 = y
+
+        y = self.dowsample_1(y)
+
+        for blk in self.encoderlayer_2:
+            y = blk(y)
+        conv2 = y
+        last_conv = conv2
+
+        y = self.dowsample_2(y)
+
+        for blk in self.encoderlayer_3:
+            y = blk(y)
+        conv3 = y
+        last_conv = conv3
+        y = self.dowsample_3(y)
+
+        pool3 = y
+
+        pool3_size = (pool3.shape[2], pool3.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask = self.calculate_mask(pool3_size).to(x.device)
+        params['attn_mask'] = attn_mask
+
+        pool3 = self.feature_proj(pool3)
+        # Bottleneck
+        #conv4 = self.conv(pool3, mask=mask)
+        mask = x[:,3:,:,:]
+        conv4 = self.bottleneck(pool3, pool3_size, params, mask)
+        #Decoder
+        up0 = self.upsample_0(conv4)
+        b, _, c = up0.shape
+        up0 = up0.view(b, last_conv.shape[2], last_conv.shape[3], c) #torch.Size([1, 64, 64, 256])
+        up0 = up0.permute(0, 3, 1, 2)
+
+        deconv0 = torch.cat([up0, last_conv],1)
+
+        y = deconv0
+        for blk in self.decoderlayer_0:
+            y = blk(y)
+
+        up1 = self.naf_upsample_1(y)
+        deconv1 = torch.cat([up1,conv2],1)
+    
+
+        y = deconv1
+        for blk in self.decoderlayer_1:
+            y = blk(y)
+
+        up2 = self.naf_upsample_2(y)
+        deconv2 = torch.cat([up2,conv1],1)
+   
+        
+        y = deconv2
+        for blk in self.decoderlayer_2:
+            y = blk(y)
+
+        up3 = self.naf_upsample_3(y)
+        deconv3 = torch.cat([up3,conv0],1)
+       
+        y = deconv3
+        for blk in self.decoderlayer_3:
+            y = blk(y)
+
+        # Output Projection
+        y = self.ending(y)
+        global enhanced_image_count
+        enhanced_image_count = enhanced_image_count + 1
+        #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
+
+        output = y + x[:,:3,:,:]
+
+        return output
+
+    #def flops(self):
+
+class SPANetScable3StagesMased(nn.Module):
+    def __init__(self, img_size=256, in_chans=3, dd_in=3,
+                 embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2], num_heads=[2, 4, 8, 16, 16, 8, 4,2],
+                 win_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
+                 norm_layer=nn.LayerNorm, patch_norm=True,
+                 use_checkpoint=False, token_projection='linear', token_mlp='leff',
+                 dowsample=Downsample, upsample=Upsample, shift_flag=True, modulator=False, 
+                 cross_modulator=False, 
+                 ##如下参数来自HAT
+                 compress_ratio=3,
+                 squeeze_factor=30,
+                 conv_scale=0.01,
+                 overlap_ratio=0.5,
+                 **kwargs):
+        super().__init__()
+        print('depths==', depths)
+        self.num_enc_layers = len(depths)//2
+        self.num_dec_layers = len(depths)//2
+        self.stage_nums = len(depths)//2
+        self.embed_dim = embed_dim
+        self.patch_norm = patch_norm
+        self.mlp_ratio = mlp_ratio
+        self.token_projection = token_projection
+        self.mlp = token_mlp
+        self.win_size =win_size
+        self.reso = img_size
+        self.pos_drop = nn.Dropout(p=drop_rate)
+        self.dd_in = dd_in
+
+        # stochastic depth
+        enc_dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths[:self.num_enc_layers]))] 
+        conv_dpr = [drop_path_rate]*depths[self.stage_nums]
+        dec_dpr = enc_dpr[::-1]
+
+        ##如下来自HAT的初始化
+        # build layers
+        self.window_size = win_size
+        self.shift_size = win_size // 2
+        self.overlap_ratio = overlap_ratio
+
+        # relative position index
+        relative_position_index_SA = self.calculate_rpi_sa()
+        relative_position_index_OCA = self.calculate_rpi_oca()
+        self.register_buffer('relative_position_index_SA', relative_position_index_SA)
+        self.register_buffer('relative_position_index_OCA', relative_position_index_OCA)
+
+        #如上是来自HAT的初始化
+
+        # Input/Output，如下两个函数起的作用与patch_embed和patch_unembed这两个函数是相同的
+        self.input_proj = InputProj(in_channel=dd_in, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU) 
+        self.output_proj = OutputProj(in_channel=2*embed_dim, out_channel=in_chans, kernel_size=3, stride=1)
+        
+        # Encoder
+
+        chan = embed_dim
+        self.encoderlayer_0 = nn.ModuleList([ScaleAwareGatedBlock(chan) for i in range(depths[0])])
+        self.dowsample_0 = nn.Conv2d(chan, 2*chan, 2, 2)
+        #self.dowsample_0 = dowsample(embed_dim, embed_dim*2) 
+        
+
+        self.encoderlayer_1 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*2) for i in range(depths[1])])
+        self.dowsample_1 = nn.Conv2d(embed_dim*2, embed_dim*4, 2, 2)
+
+        #self.dowsample_1 = dowsample(embed_dim*2, embed_dim*4)
+
+        self.encoderlayer_2 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*4) for i in range(depths[2])])
+        self.dowsample_2 = nn.Conv2d(embed_dim*4, embed_dim*8, 2, 2)
+
+        #self.dowsample_2 = dowsample(embed_dim*4, embed_dim*8)
+ 
+        self.encoderlayer_3 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*8) for i in range(depths[3])])
+        #self.dowsample_3 = dowsample(embed_dim*8, embed_dim*16)
+        self.dowsample_3 = nn.Conv2d(embed_dim*8, embed_dim*16, 2, 2)
+
+        self.feature_proj = InputProj(in_channel=embed_dim*8, out_channel=embed_dim*8, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+
+        # Bottleneck
+        self.bottleneck = MaskedSPANetLayer(dim=embed_dim*8,
+                            output_dim=embed_dim*8,
+                            input_resolution=(img_size // (2 ** 4),
+                                                img_size // (2 ** 4)),
+                            depth=depths[self.stage_nums],
+                            num_heads=num_heads[4],
+                            win_size=win_size,
+
+                            #HAT中增加的参数
+                            compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor,
+                            conv_scale=conv_scale,
+                            overlap_ratio=overlap_ratio,
+                            downsample=None,
+                            #HAT中增加的参数,parameters in HAB
+
+                            mlp_ratio=self.mlp_ratio,
+                            qkv_bias=qkv_bias, qk_scale=qk_scale,
+                            drop=drop_rate, attn_drop=attn_drop_rate,
+                            drop_path=conv_dpr,
+                            norm_layer=norm_layer,
+                            use_checkpoint=use_checkpoint)
+
+        # Decoder
+        self.upsample_0 = upsample(embed_dim*8, embed_dim*4)
+        self.decoderlayer_0 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*8) for i in range(depths[len(depths)-4])])
+        self.upsample_1 = upsample(embed_dim*8, embed_dim*4)
+        self.naf_upsample_1 = nn.PixelShuffle(2)
+
+        self.decoderlayer_1 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*4) for i in range(depths[len(depths)-3])])
+        self.upsample_2 = upsample(embed_dim*4, embed_dim)
+        self.naf_upsample_2 = nn.PixelShuffle(2)
+        
+        self.decoderlayer_2 = nn.ModuleList([ScaleAwareGatedBlock(embed_dim*2) for i in range(depths[len(depths)-2])])
+        
+
+        self.intro = nn.Conv2d(in_channels=dd_in, out_channels=embed_dim, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.input_proj = InputProj(in_channel=dd_in, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        
+        self.feat_proj_up_level3 = InputProj(in_channel=embed_dim*8, out_channel=embed_dim*8, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level2 = InputProj(in_channel=embed_dim*4, out_channel=embed_dim*4, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level1 = InputProj(in_channel=embed_dim*2, out_channel=embed_dim*2, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+        self.feat_proj_up_level0 = InputProj(in_channel=embed_dim, out_channel=embed_dim, kernel_size=3, stride=1, act_layer=nn.LeakyReLU)
+
+        self.ending = nn.Conv2d(in_channels=embed_dim*2, out_channels=3, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def calculate_rpi_sa(self):
+        # calculate relative position index for SA
+        coords_h = torch.arange(self.window_size)
+        coords_w = torch.arange(self.window_size)
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.window_size - 1
+        relative_coords[:, :, 0] *= 2 * self.window_size - 1
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        return relative_position_index
+
+    def calculate_rpi_oca(self):
+        # calculate relative position index for OCA
+        window_size_ori = self.window_size
+        window_size_ext = self.window_size + int(self.overlap_ratio * self.window_size)
+
+        coords_h = torch.arange(window_size_ori)
+        coords_w = torch.arange(window_size_ori)
+        coords_ori = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, ws, ws
+        coords_ori_flatten = torch.flatten(coords_ori, 1)  # 2, ws*ws
+
+        coords_h = torch.arange(window_size_ext)
+        coords_w = torch.arange(window_size_ext)
+        coords_ext = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, wse, wse
+        coords_ext_flatten = torch.flatten(coords_ext, 1)  # 2, wse*wse
+
+        relative_coords = coords_ext_flatten[:, None, :] - coords_ori_flatten[:, :, None]   # 2, ws*ws, wse*wse
+
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # ws*ws, wse*wse, 2
+        relative_coords[:, :, 0] += window_size_ori - window_size_ext + 1  # shift to start from 0
+        relative_coords[:, :, 1] += window_size_ori - window_size_ext + 1
+
+        relative_coords[:, :, 0] *= window_size_ori + window_size_ext - 1
+        relative_position_index = relative_coords.sum(-1)
+        return relative_position_index
+
+    def calculate_mask(self, x_size):
+        # calculate attention mask for SW-MSA
+        h, w = x_size
+        img_mask = torch.zeros((1, h, w, 1))  # 1 h w 1
+        h_slices = (slice(0, -self.window_size), slice(-self.window_size,
+                                                       -self.shift_size), slice(-self.shift_size, None))
+        w_slices = (slice(0, -self.window_size), slice(-self.window_size,
+                                                       -self.shift_size), slice(-self.shift_size, None))
+        cnt = 0
+        for h in h_slices:
+            for w in w_slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = hat_window_partition(img_mask, self.window_size)  # nw, window_size, window_size, 1
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+
+        return attn_mask
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'absolute_pos_embed'}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
+    def extra_repr(self) -> str:
+        return f"embed_dim={self.embed_dim}, token_projection={self.token_projection}, token_mlp={self.mlp},win_size={self.win_size}"
+
+    def forward(self, x, mask=None):
+        # Input Projection
+        #y = self.input_proj(x)
+        #y = self.pos_drop(y)
+
+        params = {'rpi_sa': self.relative_position_index_SA, 'rpi_oca': self.relative_position_index_OCA}
+       
+        y = self.intro(x)
+
+        #Encoder
+        for blk in self.encoderlayer_0:
+            y = blk(y)
+        conv0 = y
+        y = self.dowsample_0(y)
+
+        for blk in self.encoderlayer_1:
+            y = blk(y)
+        conv1 = y
+
+        y = self.dowsample_1(y)
+
+        for blk in self.encoderlayer_2:
+            y = blk(y)
+        conv2 = y
+        last_conv = conv2
+
+        y = self.dowsample_2(y)
+
+        pool3 = y
+
+        pool3_size = (pool3.shape[2], pool3.shape[3])
+        # Calculate attention mask and relative position index in advance to speed up inference. 
+        # The original code is very time-cosuming for large window size.
+        attn_mask = self.calculate_mask(pool3_size).to(x.device)
+        params['attn_mask'] = attn_mask
+
+        pool3 = self.feature_proj(pool3)
+        # Bottleneck
+        #conv4 = self.conv(pool3, mask=mask)
+        conv4 = self.bottleneck(pool3, pool3_size, params, x[:,3:,:,:])
+        #Decoder
+        up0 = self.upsample_0(conv4)
+        b, _, c = up0.shape
+        up0 = up0.view(b, last_conv.shape[2], last_conv.shape[3], c) #torch.Size([1, 64, 64, 256])
+        up0 = up0.permute(0, 3, 1, 2)
+
+        deconv0 = torch.cat([up0, last_conv],1)
+
+        y = deconv0
+        for blk in self.decoderlayer_0:
+            y = blk(y)
+
+        up1 = self.naf_upsample_1(y)
+        deconv1 = torch.cat([up1,conv1],1)
+    
+
+        y = deconv1
+        for blk in self.decoderlayer_1:
+            y = blk(y)
+
+        up2 = self.naf_upsample_2(y)
+        deconv2 = torch.cat([up2,conv0],1)
+   
+        
+        y = deconv2
+        for blk in self.decoderlayer_2:
+            y = blk(y)
+
+        # Output Projection
+        y = self.ending(y)
+        global enhanced_image_count
+        enhanced_image_count = enhanced_image_count + 1
+        #util.save_feature_map(y, f'./results/feats_maps/{enhanced_image_count}_residual.png')
+
+        output = y + x[:,:3,:,:]
+
+        return output
+
+    def flops(self):
+        flops = 0
+        # Input Projection
+        flops += self.input_proj.flops(self.reso,self.reso)
+        # Encoder
+        flops += self.encoderlayer_0.flops()+self.dowsample_0.flops(self.reso,self.reso)
+        flops += self.encoderlayer_1.flops()+self.dowsample_1.flops(self.reso//2,self.reso//2)
+        flops += self.encoderlayer_2.flops()+self.dowsample_2.flops(self.reso//2**2,self.reso//2**2)
+        flops += self.encoderlayer_3.flops()+self.dowsample_3.flops(self.reso//2**3,self.reso//2**3)
+
+        # Bottleneck
+        flops += self.conv.flops()
+
+        # Decoder
+        flops += self.upsample_0.flops(self.reso//2**4,self.reso//2**4)+self.decoderlayer_0.flops()
+        flops += self.upsample_1.flops(self.reso//2**3,self.reso//2**3)+self.decoderlayer_1.flops()
+        flops += self.upsample_2.flops(self.reso//2**2,self.reso//2**2)+self.decoderlayer_2.flops()
+        flops += self.upsample_3.flops(self.reso//2,self.reso//2)+self.decoderlayer_3.flops()
+        
+        # Output Projection
+        flops += self.output_proj.flops(self.reso,self.reso)
+        return flops
 
 class SPANetScable3Stages(nn.Module):
     def __init__(self, img_size=256, in_chans=3, dd_in=3,
@@ -3541,15 +4268,13 @@ class SPANetScable3Stages(nn.Module):
         flops += self.output_proj.flops(self.reso,self.reso)
         return flops
 
-
-
 if __name__ == "__main__":
     input_size = 256
     arch = SPANet
     height = 256 
     width = 256
     x = torch.randn((1, 4, width, height)).cuda()
-    """
+    
     depths=[2, 2, 2, 6, 28, 2,  2, 2, 6]
     model_restoration = SPANetScable(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths,
                  win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False).cuda()
@@ -3567,8 +4292,9 @@ if __name__ == "__main__":
     print(x.shape)
     """
 
-    depths=[1, 1, 1, 8, 1, 1, 1]
+    depths=[1, 2, 4, 8, 4, 2, 1]
     model_restoration_3stage = SPANetScable3Stages(img_size=input_size, in_chans=3, dd_in=4, embed_dim=32,depths=depths, win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False).cuda()
+    """
     """
     from ptflops import get_model_complexity_info
     macs, params = get_model_complexity_info(model_restoration_3stage, (4, input_size, input_size), as_strings=True,
@@ -3578,5 +4304,5 @@ if __name__ == "__main__":
     print('# model_restoration parameters: %.2f M'%(sum(param.numel() for param in model_restoration_3stage.parameters())/ 1e6))
     #print("number of GFLOPs: %.2f G"%(model_restoration.flops() / 1e9))
     """
-    x = model_restoration_3stage(x)
+    #x = model_restoration_3stage(x)
     print(x.shape)

@@ -10,7 +10,7 @@ from torchvision import models
 from util.tools import *
 from util import util
 from . import base_networks as networks_init
-from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch, SHTNet_arch
+from . import transformer,swinir,swinir_lap,swinir_lap_refine,lap_swinih_arch,swinir_ds,lap_restormer,restormer_arch, lap_NAFNet_arch, SHTNet_arch,SPANETGAD_arch
 from basicsr.models.archs import NAFNet_arch
 from . import uformer_arch,SPANET_arch,fftformer_arch,SAGNet_arch,NAFNet_WFFN_arch,SPANET_arch_backup_old,SPANET_arch_backup_0717
 import math
@@ -54,6 +54,8 @@ def define_G(netG='retinex',init_type='normal', init_gain=0.02, opt=None):
         net = SHTNetGenerator(opt)
     elif netG == "SPASMALL":
         net = SPANetSmallGenerator(opt)
+    elif netG == "SPANETGAD":
+        net = SPANetGadGenerator(opt)
 
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
@@ -221,13 +223,71 @@ class SPANetSmallGenerator(nn.Module):
     def forward(self, inputs):
         harmonized = self.spanet(inputs)
         return harmonized
+
+class SPANetGadGenerator(nn.Module):
+    def __init__(self, opt=None):
+        super(SPANetGadGenerator, self).__init__()
+        
+        input_size = 256
+        depths=[1, 1, 1, 1, 16, 1, 1, 1,1]
+        embed_dim = 32
+
+        
+        self.spanet = SPANETGAD_arch.SPANetGadient(img_size=input_size, in_chans=3, dd_in=4, embed_dim=embed_dim,depths=depths, win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)
+       
+        self.evaluate_efficiency(image_size = 256)
+
+    def forward(self, inputs):
+        harmonized = self.spanet(inputs)
+        return harmonized
     
+    def evaluate_efficiency(self,image_size = 256):
+        size = image_size
+        gt = torch.randn((1,3,size,size)).cuda()
+        cond = torch.randn(1,4,size,size).cuda()
+        mask = torch.randn(1,1,size,size).cuda()
+
+        self.spanet = self.spanet.cuda()
+        flops, params = profile(self.spanet, inputs=(cond,))
+        flops, params = clever_format([flops, params], '%.3f')
+
+        print('params=', params)
+        print('FLOPs=',flops)
+
+    def evaluate_inference_speed(self, image_size=256):
+        size = image_size
+        gt = torch.randn((1,3,size,size)).cuda()
+        cond = torch.randn(1,3,size,size).cuda()
+        mask = torch.randn(1,1,size,size).cuda()
+
+        starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        repetitions = 300
+        timings=np.zeros((repetitions,1))
+        #GPU-WARM-UP
+        for _ in range(10):
+            _ = self.spanet(gt, cond, mask)             
+        # MEASURE PERFORMANCE
+        with torch.no_grad():
+            for rep in range(repetitions):
+                starter.record()
+                _ = self.netG(gt, cond, mask)  
+                ender.record()
+                # WAIT FOR GPU SYNC
+                torch.cuda.synchronize()
+                curr_time = starter.elapsed_time(ender)
+                timings[rep] = curr_time
+        mean_syn = np.sum(timings) / repetitions
+        std_syn = np.std(timings)
+        mean_fps = 1000. / mean_syn
+        print(' * Mean@1 {mean_syn:.3f}ms Std@5 {std_syn:.3f}ms FPS@1 {mean_fps:.2f}'.format(mean_syn=mean_syn, std_syn=std_syn, mean_fps=mean_fps))
+        print(mean_syn)
+
 class SPANetGenerator(nn.Module):
     def __init__(self, opt=None):
         super(SPANetGenerator, self).__init__()
         
         input_size = 256
-        depths=[1, 1, 1, 1, 2, 1, 1, 1,1]
+        depths=[1, 1, 1, 1, 16, 1, 1, 1,1]
         embed_dim = 32
 
         #self.spanet = SPANET_arch.SPANetScable(img_size=input_size, in_chans=3, dd_in=4, embed_dim=embed_dim,depths=depths, win_size=8, mlp_ratio=4., token_projection='linear', token_mlp='leff', modulator=True, shift_flag=False)

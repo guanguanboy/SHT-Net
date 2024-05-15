@@ -9,9 +9,15 @@
 - Python 3
 - CPU or NVIDIA GPU + CUDA CuDNN
 
+## Install basicsr
+```bash
+python setup_basicsr.py develop --no_cuda_ext
+```
+
 ## Train/Test
 - Download [iHarmony4](https://github.com/bcmi/Image-Harmonization-Dataset-iHarmony4) dataset.
-
+We have partitioned a validation set from the original iHarmony4 dataset. 
+Detailed partitioning text files can be found at [Google Drive](https://drive.google.com/drive/folders/1HckIxN0HR68DRAiYJO_RqGKYk_m1fxN0?usp=drive_link)
 - Train our model:
 ```bash
 CUDA_VISIBLE_DEVICES=0 python train.py --model SPANET --name experimental_name --dataset_root /***/iHarmony4/HAdobe5k/ --dataset_name HAdobe5k --batch_size 4 --init_port 55554 --local_rank 4 --crop_size 1024 --load_size 1024 --netG SPANET
